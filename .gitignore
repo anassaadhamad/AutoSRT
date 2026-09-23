@@ -1,0 +1,27 @@
+# Dependencies
+node_modules
+/.pnp
+.pnp.js
+
+# Next.js build outputs
+.next/
+out/
+build/
+dist/
+
+# TypeScript & logs
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files and credentials
+.env*
+!.env.example
+token.txt
+
+# OS and IDE files
+.DS_Store
+*.pem
+Thumbs.db

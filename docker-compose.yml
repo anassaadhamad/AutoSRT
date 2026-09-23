@@ -1,0 +1,26 @@
+services:
+  autosrt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: autosrt:latest
+    container_name: autosrt
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_WHISPER_MODEL=${GROQ_WHISPER_MODEL:-whisper-large-v3-turbo}
+      - TRANSCRIPTION_CONCURRENCY=${TRANSCRIPTION_CONCURRENCY:-2}
+      - MAX_BATCH_FILES=${MAX_BATCH_FILES:-10}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-500}
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
