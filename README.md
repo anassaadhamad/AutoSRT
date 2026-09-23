@@ -1,24 +1,26 @@
 <div align="center">
 
+<img src="public/logo.svg" alt="AutoSRT Logo" width="160" height="auto" />
+
 # 🎬 AutoSRT
 
-### High-Performance Batch Video & Audio to Subtitles (`.srt`) Powered by Groq Whisper & FFmpeg
+### High-Performance Batch Video & Audio to Subtitles (`.srt`) Powered by Groq Whisper, LLM Translation & FFmpeg
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-autosrt.anas.lol-00C781?style=for-the-badge&logo=google-chrome&logoColor=white)](https://autosrt.anas.lol)
+[![Download EXE](https://img.shields.io/badge/Download-AutoSRT.exe_(92_KB)-6366F1?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Groq Whisper](https://img.shields.io/badge/Groq-Whisper_v3_Turbo-orange?style=for-the-badge&logo=groq)](https://groq.com/)
 [![Docker](https://img.shields.io/badge/Docker-Multi--stage-2496ED?style=for-the-badge&logo=docker)](https://www.docker.com/)
 [![Coolify Ready](https://img.shields.io/badge/Coolify-Ready-8B5CF6?style=for-the-badge)](https://coolify.io)
-[![Security](https://img.shields.io/badge/Security-OWASP_Hardened-emerald?style=for-the-badge&logo=shield)](https://owasp.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 <p align="center">
-  <b>Transform hours of multimedia into perfectly synchronized subtitles in seconds.</b><br/>
-  Zero setup headaches, zero data retention, fully dockerized, and enterprise-hardened.
+  <b>Transform hours of multimedia into perfectly synchronized and translated subtitles in seconds.</b><br/>
+  Zero setup headaches, zero data retention, AI translation to 16+ languages, bilingual mode, fully dockerized, and enterprise-hardened.
 </p>
 
-[🌐 **Live Demo**](https://autosrt.anas.lol) • [🪟 **Download .EXE**](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) • [Quick Start](#-quick-start) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [Security](#-enterprise-grade-security)
+[🌐 **Live Demo**](https://autosrt.anas.lol) • [🪟 **Download .EXE**](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) • [Quick Start](#-quick-start) • [Desktop App](#-windows-desktop-app-autosrtexe---100-local-edition) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [بالعربية](#-نظرة-سريعة-بالعربية)
 
 </div>
 
@@ -29,8 +31,12 @@
 - **🚀 Lightning-Fast AI Transcription**: Leverages **Groq Whisper Large v3 Turbo** on specialized LPUs to transcribe speech up to 216x faster than real-time.
 - **🌍 AI Multi-Language Subtitle Translation**: Automatically translate extracted subtitles into **16+ major world languages** (Arabic, English, Spanish, French, German, Turkish, Italian, Russian, Chinese, Japanese, Korean, Portuguese, Indonesian, Hindi, Urdu, etc.) powered by Groq's high-throughput LLMs.
 - **🔤 Bilingual Subtitles Mode**: Option to generate bilingual subtitles displaying both the original spoken line and the translated line simultaneously (`Original\nTranslation`).
+- **⏱️ Smart Rate-Limit Auto-Cooldown & Resilience**:
+  - **Allam-2-7b Prioritization**: Employs SDAIA's ultra-fast Arabic model (18ms response, zero reasoning tokens) for Arabic translations, saving 90% quota.
+  - **Adaptive Cooldown Countdown**: Seamlessly handles Groq free-tier limits (`429 OTPM`) with automatic cooldown countdowns and zero-loss auto-resumption.
+  - **Smart Pacing & Micro-Batches**: Slices segments into compact 15-item batches with token ceilings to prevent quota spikes.
 - **🎧 Full Audio & Video Mixed Batching**: Drop videos (`.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, etc.) and audio recordings (`.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, etc.) into the exact same batch.
-- **🪟 Native Windows Desktop App**: Run `AutoSRT.exe` directly on Windows with zero setup, zero dependencies, translation controls, and instant frameless desktop interface.
+- **🪟 Native Windows Desktop App**: Run `AutoSRT.exe` directly on Windows with zero setup, zero dependencies, built-in translation dropdown, and bilingual toggle.
 - **🔑 Bring Your Own Key (BYOK)**: Use the shared server instance, or easily enter your own free Groq API key in the app settings for unlimited personal quota.
 - **⚡ Smart Queue & State Preservation**:
   - **Zero Duplicate Processing**: Already completed files (`ready`) are preserved and never re-uploaded or re-billed when you add new files.
@@ -54,6 +60,8 @@ flowchart TD
     D --> E[FFmpeg Native Normalizer: 16kHz Mono MP3]
     E --> F[Groq Whisper LPU Inference with Auto-Retry]
     F -->|Target Lang Selected| T[Groq LLM Fast Translation & Bilingual Stacking]
+    T -->|Rate Limit 429| R[Adaptive Auto-Cooldown & Resume]
+    R --> T
     F -->|Original Only| G[Segment Synchronizer: toSrt]
     T --> G
     G --> H[Live NDJSON Stream to Browser]
@@ -63,17 +71,58 @@ flowchart TD
 
 ---
 
-## 🎛️ Supported Formats
+## 🎛️ Supported Formats & Languages
 
+### Media Formats
 | Category | Formats Supported |
 |---|---|
 | **Video** | `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mpeg`, `.mpg`, `.wmv`, `.flv`, `.3gp` |
 | **Audio** | `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`, `.wma`, `.opus`, `.weba` |
-| **Output** | SubRip Subtitles (`.srt`) with standardized `HH:MM:SS,mmm` millisecond timestamps |
+| **Output** | Standard SubRip Subtitles (`.srt`) with precise `HH:MM:SS,mmm` millisecond timestamps |
+
+### Subtitle Translation Languages
+| Code | Language | Arabic Name | Supported Modes |
+|---|---|---|---|
+| `none` | Original Language | اللغة الأصلية | Monolingual |
+| `ar` | Arabic | العربية | Single / Bilingual |
+| `en` | English | الإنجليزية | Single / Bilingual |
+| `es` | Spanish | الإسبانية | Single / Bilingual |
+| `fr` | French | الفرنسية | Single / Bilingual |
+| `de` | German | الألمانية | Single / Bilingual |
+| `tr` | Turkish | التركية | Single / Bilingual |
+| `it` | Italian | الإيطالية | Single / Bilingual |
+| `ru` | Russian | الروسية | Single / Bilingual |
+| `zh` | Simplified Chinese | الصينية | Single / Bilingual |
+| `ja` | Japanese | اليابانية | Single / Bilingual |
+| `ko` | Korean | الكورية | Single / Bilingual |
+| `pt` | Portuguese | البرتغالية | Single / Bilingual |
+| `id` | Indonesian | الإندونيسية | Single / Bilingual |
+| `hi` | Hindi | الهندية | Single / Bilingual |
+| `ur` | Urdu | الأردية | Single / Bilingual |
 
 ---
 
-## 🚀 Quick Start
+## 🪟 Windows Desktop App (`AutoSRT.exe` - 100% Local Edition)
+
+AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** that runs completely on your local machine with no reliance on external servers:
+
+[![Download AutoSRT.exe](https://img.shields.io/badge/Download-AutoSRT.exe_(92_KB)-6366F1?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe)
+
+### Highlights of the Desktop Edition:
+- **🔒 100% Local & Private**: Direct communication between your PC and Groq's official API (`https://api.groq.com`). Zero intermediate servers, zero logs.
+- **🌍 Built-in Translation & Bilingual Subtitles**: Choose your target language directly from the toolbar with optional bilingual dual-line subtitle generation.
+- **🔑 Bring Your Own Key**: Enter your free Groq API key once. It is saved locally in `%APPDATA%\AutoSRT\settings.ini`.
+- **📂 Drag & Drop Files & Folders**: Drop multiple video/audio files or entire folders into the queue with a single mouse drag.
+- **⚡ Local FFmpeg Engine**: Automatically detects FFmpeg in your PATH or app folder. If missing, it features a **1-click automatic download** of portable FFmpeg directly into `%LOCALAPPDATA%\AutoSRT\bin`.
+- **🎬 Smart Speech Audio Extraction**: Converts video files into ultra-compact, crystal-clear 16kHz mono audio streams before sending to Groq, turning multi-gigabyte videos into ~15MB in seconds.
+- **💾 Automatic `.srt` Placement**: Subtitles are saved directly next to your video files (e.g. `Lecture.mp4` ➡️ `Lecture.srt`) or in any custom folder you designate.
+- **🌐 Bilingual UI (English Default & Arabic)**: Clean interface with English as the primary default and an instant 1-click toggle to Arabic (`العربية`) with native RTL layout switching.
+- **👁️ Built-in Subtitle Viewer**: One-click to preview the generated subtitles or reveal the file in Windows Explorer.
+- **🪶 Ultra-Lightweight (92 KB)**: No heavy Electron, no Python runtime. Pure C# WinForms running natively on any Windows 10 or 11 system out of the box!
+
+---
+
+## 🚀 Quick Start (Web Application)
 
 ### 1. Prerequisites
 - **Node.js**: v20 or v22+
@@ -102,25 +151,6 @@ GROQ_API_KEY=gsk_your_groq_api_key_here
 npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
-
----
-
-## 🪟 Windows Desktop App (`AutoSRT.exe` - 100% Local Edition)
-
-AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** that runs completely on your local machine with no reliance on external servers:
-
-[![Download AutoSRT.exe](https://img.shields.io/badge/Download-AutoSRT.exe_(64_KB)-6366F1?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe)
-
-### Highlights of the Desktop Edition:
-- **🔒 100% Local & Private**: Direct communication between your PC and Groq's official API (`https://api.groq.com`). Zero intermediate servers, zero logs.
-- **🔑 Bring Your Own Key**: Enter your free Groq API key once. It is saved locally in `%APPDATA%\AutoSRT\settings.ini`.
-- **📂 Drag & Drop Files & Folders**: Drop multiple video/audio files or entire folders into the queue with a single mouse drag.
-- **⚡ Local FFmpeg Engine**: Automatically detects FFmpeg in your PATH or app folder. If missing, it features a **1-click automatic download** of portable FFmpeg directly into `%LOCALAPPDATA%\AutoSRT\bin`.
-- **🎬 Smart Speech Audio Extraction**: Converts video files into ultra-compact, crystal-clear 16kHz mono audio streams before sending to Groq, turning multi-gigabyte videos into ~15MB in seconds.
-- **💾 Automatic `.srt` Placement**: Subtitles are saved directly next to your video files (e.g. `Lecture.mp4` ➡️ `Lecture.srt`) or in any custom folder you designate.
-- **🌐 Multi-Language (English Default & Arabic)**: Clean bilingual interface with English as the primary default and an instant 1-click toggle to Arabic (`العربية`) with native RTL layout switching.
-- **👁️ Built-in Subtitle Viewer**: One-click to preview the generated subtitles or reveal the file in Windows Explorer.
-- **🪶 Ultra-Lightweight (64 KB)**: No heavy Electron, no Python runtime. Runs natively on any Windows 10 or 11 system out of the box!
 
 ---
 
@@ -188,13 +218,27 @@ AutoSRT includes an industry-grade defense-in-depth security model:
 
 ---
 
+## 🇸🇦 نظرة سريعة بالعربية
+
+مشروع **AutoSRT** هو حل متكامل ومجاني مفتوح المصدر لتحويل الصوت والفيديو إلى ملفات ترجمة احترافية (`.srt`) متزامنة بالمللي ثانية، مع إمكانية **ترجمة النصوص إلى أكثر من 16 لغة** حول العالم وخيار **الترجمة الثنائية (Bilingual Subtitles)**.
+
+### أهم المميزات:
+- **نسخة ديسكتوب خفيفة جداً (92 KB)**: تعمل مباشرة على ويندوز 10 و 11 بدون أي تثبيتات أو برامج إضافية، وتتصل مباشرة بـ Groq بدون وسيط.
+- **تطبيق ويب تفاعلي**: مبني بأحدث تقنيات Next.js 16 مع دعم السحب والإفلات والتحميل الفردي أو الجماعي بملف مضغوط `subtitles.zip`.
+- **نظام ذكي للتعامل مع حدود الاستخدام (Rate Limits)**:
+  - الاعتماد على نموذج **Allam-2-7b** العربي فائق السرعة لترجمة العربية في 18 ميلي ثانية وتوفير 90% من الحصة.
+  - إيقاف مؤقت ذكي واستئناف تلقائي مع عداد تنازلي حي في حال الوصول لحدود الحساب المجاني.
+- **حفظ الخصوصية 100%**: لا يتم تخزين أي ملفات أو نصوص، ويتم حذف الملفات المؤقتة فور الانتهاء مباشرة.
+
+---
+
 ## ⚙️ Configuration
 
 All configuration is driven through environment variables:
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `GROQ_API_KEY` | **Required** | - | Groq Cloud API Key for Whisper transcription |
+| `GROQ_API_KEY` | **Required** | - | Groq Cloud API Key for Whisper transcription & LLM translation |
 | `GROQ_WHISPER_MODEL` | Optional | `whisper-large-v3-turbo` | Whisper model (`whisper-large-v3-turbo` or `whisper-large-v3`) |
 | `TRANSCRIPTION_CONCURRENCY` | Optional | `2` | Number of simultaneous media transcriptions per batch (1 - 5) |
 | `MAX_BATCH_FILES` | Optional | `10` | Maximum number of files permitted in a single batch (1 - 50) |
