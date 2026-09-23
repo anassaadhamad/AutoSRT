@@ -493,6 +493,8 @@ namespace AutoSRTDesktop
                 string prompt = "You are a professional subtitle translator. Translate each subtitle text into " + targetName + ". Output ONLY valid JSON: {\"translations\": [{\"id\": 0, \"text\": \"...\"}]}. Maintain exact same IDs and natural phrasing.";
 
                 bool success = false;
+                Exception lastEx = null;
+
                 foreach (string tModel in TranslationModels)
                 {
                     try
@@ -520,36 +522,35 @@ namespace AutoSRTDesktop
                                 if (resp.IsSuccessStatusCode)
                                 {
                                     string respBody = await resp.Content.ReadAsStringAsync();
-                                    var chatResp = jss.Deserialize<Dictionary<string, object>>(respBody);
-                                    if (chatResp != null && chatResp.ContainsKey("choices"))
+                                    var chatResp = jss.Deserialize<GroqChatResponse>(respBody);
+                                    if (chatResp != null && chatResp.choices != null && chatResp.choices.Count > 0)
                                     {
-                                        var choices = (object[])chatResp["choices"];
-                                        if (choices.Length > 0)
+                                        string content = chatResp.choices[0].message != null ? chatResp.choices[0].message.content : null;
+                                        if (!string.IsNullOrEmpty(content))
                                         {
-                                            var firstChoice = (Dictionary<string, object>)choices[0];
-                                            var msg = (Dictionary<string, object>)firstChoice["message"];
-                                            string content = (string)msg["content"];
+                                            content = content.Trim();
+                                            if (content.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+                                                content = content.Substring(7);
+                                            else if (content.StartsWith("```"))
+                                                content = content.Substring(3);
+                                            if (content.EndsWith("```"))
+                                                content = content.Substring(0, content.Length - 3);
+                                            content = content.Trim();
 
-                                            var transObj = jss.Deserialize<Dictionary<string, object>>(content);
-                                            if (transObj != null && transObj.ContainsKey("translations"))
+                                            var transObj = jss.Deserialize<SubtitleTranslationContainer>(content);
+                                            if (transObj != null && transObj.translations != null)
                                             {
-                                                var transList = (object[])transObj["translations"];
-                                                foreach (Dictionary<string, object> item in transList)
+                                                foreach (var item in transObj.translations)
                                                 {
-                                                    if (item.ContainsKey("id") && item.ContainsKey("text"))
+                                                    if (item != null && item.id >= 0 && item.id < segments.Count && !string.IsNullOrWhiteSpace(item.text))
                                                     {
-                                                        int id = Convert.ToInt32(item["id"]);
-                                                        string trText = (string)item["text"];
-                                                        if (id >= 0 && id < segments.Count && !string.IsNullOrWhiteSpace(trText))
+                                                        if (bilingual)
                                                         {
-                                                            if (bilingual)
-                                                            {
-                                                                segments[id].text = segments[id].text.Trim() + "\r\n" + trText.Trim();
-                                                            }
-                                                            else
-                                                            {
-                                                                segments[id].text = trText.Trim();
-                                                            }
+                                                            segments[item.id].text = segments[item.id].text.Trim() + "\r\n" + item.text.Trim();
+                                                        }
+                                                        else
+                                                        {
+                                                            segments[item.id].text = item.text.Trim();
                                                         }
                                                     }
                                                 }
@@ -563,13 +564,26 @@ namespace AutoSRTDesktop
                                 {
                                     throw new Exception(I18n.T("Invalid Groq API Key for translation.", "مفتاح Groq غير صالح للترجمة."));
                                 }
+                                else
+                                {
+                                    string errBody = await resp.Content.ReadAsStringAsync();
+                                    lastEx = new Exception(string.Format("Groq API error ({0}): {1}", (int)resp.StatusCode, errBody));
+                                }
                             }
                         }
                     }
                     catch (OperationCanceledException) { throw; }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                    }
 
                     if (success) break;
+                }
+
+                if (!success && lastEx != null)
+                {
+                    throw new Exception(I18n.T("Failed to translate subtitle segment: ", "فشلت ترجمة مقطع من الترجمة: ") + lastEx.Message);
                 }
             }
         }
@@ -677,6 +691,33 @@ namespace AutoSRTDesktop
     {
         public string text { get; set; }
         public List<GroqSegment> segments { get; set; }
+    }
+
+    public class GroqChatResponse
+    {
+        public List<GroqChatChoice> choices { get; set; }
+    }
+
+    public class GroqChatChoice
+    {
+        public GroqChatMessage message { get; set; }
+    }
+
+    public class GroqChatMessage
+    {
+        public string role { get; set; }
+        public string content { get; set; }
+    }
+
+    public class SubtitleTranslationContainer
+    {
+        public List<SubtitleTranslationItem> translations { get; set; }
+    }
+
+    public class SubtitleTranslationItem
+    {
+        public int id { get; set; }
+        public string text { get; set; }
     }
     #endregion
 
@@ -1804,6 +1845,12 @@ namespace AutoSRTDesktop
         private async void BtnStart_Click(object sender, EventArgs e)
         {
             if (isProcessing) return;
+
+            // Sync settings immediately with current UI state
+            settings.TargetLanguage = GetSelectedTargetLanguageCode();
+            settings.BilingualSubtitles = chkBilingual != null && chkBilingual.Checked;
+            settings.Language = GetSelectedLanguageCode();
+            settings.Save();
 
             string apiKey = settings.GroqApiKey.Trim();
             if (string.IsNullOrEmpty(apiKey))
