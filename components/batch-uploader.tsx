@@ -68,6 +68,7 @@ export function BatchUploader() {
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string>();
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeControllers = useRef<Map<string, AbortController>>(new Map());
 
   function addFiles(incoming: File[]) {
     const mediaFiles = incoming.filter((file) =>
@@ -95,7 +96,7 @@ export function BatchUploader() {
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
-    if (!running) addFiles(Array.from(event.dataTransfer.files));
+    addFiles(Array.from(event.dataTransfer.files));
   }
 
   function patchItem(id: string, patch: Partial<UploadItem>) {
@@ -106,6 +107,36 @@ export function BatchUploader() {
     if (running) return;
     patchItem(id, { status: "queued", detail: undefined });
     setNotice(undefined);
+  }
+
+  function removeItem(id: string) {
+    // If active controller exists, abort it immediately!
+    const controller = activeControllers.current.get(id);
+    if (controller) {
+      controller.abort();
+      activeControllers.current.delete(id);
+    }
+    setItems((current) => {
+      const next = current.filter((item) => item.id !== id);
+      if (!next.some((item) => item.status === "uploading" || item.status === "extracting" || item.status === "transcribing")) {
+        setRunning(false);
+      }
+      return next;
+    });
+  }
+
+  function cancelAllRunning() {
+    activeControllers.current.forEach((controller) => controller.abort());
+    activeControllers.current.clear();
+    setRunning(false);
+    setNotice("Processing cancelled.");
+    setItems((current) =>
+      current.map((item) =>
+        item.status === "uploading" || item.status === "extracting" || item.status === "transcribing"
+          ? { ...item, status: "queued", detail: "Cancelled by user" }
+          : item
+      )
+    );
   }
 
   function downloadItem(item: UploadItem) {
@@ -136,7 +167,7 @@ export function BatchUploader() {
     // Determine pending files that actually need transcription
     const targets = items.filter((item) => item.status === "queued" || item.status === "error");
 
-    // If no pending files but ready items exist, allow redownloading all
+    // If no pending files but ready items exist, allow downloading all
     if (targets.length === 0) {
       const readyCount = items.filter((i) => i.status === "ready").length;
       if (readyCount > 0) {
@@ -145,7 +176,7 @@ export function BatchUploader() {
       return;
     }
 
-    // Check for duplicate stems among pending targets and against existing completed items
+    // Check for duplicate stems among pending targets
     const duplicateStems = new Set<string>();
     const seen = new Set<string>();
     for (const { file } of targets) {
@@ -161,89 +192,99 @@ export function BatchUploader() {
     setRunning(true);
     setNotice(undefined);
 
-    // Only transition pending targets to "uploading"
-    const targetIds = new Set(targets.map((t) => t.id));
-    setItems((current) =>
-      current.map((item) =>
-        targetIds.has(item.id)
-          ? { ...item, status: "uploading", detail: undefined, srtContent: undefined, srtFilename: undefined }
-          : item
-      )
-    );
+    const CONCURRENCY_LIMIT = 2;
+    let cursor = 0;
+    const pendingPool = [...targets];
+    const newResults: Array<{ id: string; filename: string; content: string }> = [];
 
-    const form = new FormData();
-    targets.forEach(({ id, file }) => {
-      form.append("ids", id);
-      form.append("files", file, file.name);
-    });
+    async function processItem(item: UploadItem) {
+      const controller = new AbortController();
+      activeControllers.current.set(item.id, controller);
 
-    const newResults: Array<{ id?: string; filename: string; content: string }> = [];
+      patchItem(item.id, {
+        status: "uploading",
+        detail: undefined,
+        srtContent: undefined,
+        srtFilename: undefined,
+      });
 
-    try {
-      const response = await fetch("/api/transcribe", { method: "POST", body: form });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: "The server rejected the batch." }));
-        throw new Error(body.error ?? "The server rejected the batch.");
-      }
-      if (!response.body) throw new Error("The server returned no response stream.");
+      const form = new FormData();
+      form.append("ids", item.id);
+      form.append("files", item.file, item.file.name);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const event = JSON.parse(line) as ServerEvent;
-          if (event.type === "status" && event.id && event.status) {
-            patchItem(event.id, { status: event.status, detail: event.message });
-          } else if (event.type === "result" && event.filename && event.content !== undefined) {
-            newResults.push({ id: event.id, filename: event.filename, content: event.content });
-            if (event.id) {
-              patchItem(event.id, {
+      try {
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          body: form,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({ error: "Processing failed." }));
+          throw new Error(body.error ?? "Processing failed.");
+        }
+        if (!response.body) throw new Error("No response stream.");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line) as ServerEvent;
+            if (event.type === "status" && event.status) {
+              patchItem(item.id, { status: event.status, detail: event.message });
+            } else if (event.type === "result" && event.filename && event.content !== undefined) {
+              newResults.push({ id: item.id, filename: event.filename, content: event.content });
+              patchItem(item.id, {
                 status: "ready",
                 srtContent: event.content,
                 srtFilename: event.filename,
               });
+              // Auto-download each completed file immediately!
+              saveBlob(
+                new Blob([event.content], { type: "application/x-subrip;charset=utf-8" }),
+                event.filename
+              );
             }
-          } else if (event.type === "complete") {
-            setNotice(
-              event.failed
-                ? `${event.succeeded} completed; ${event.failed} failed. New subtitles were downloaded.`
-                : `${event.succeeded} subtitle file${event.succeeded === 1 ? "" : "s"} ready and downloaded.`
-            );
           }
         }
-        if (done) break;
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "Processing error.";
+        patchItem(item.id, { status: "error", detail: message });
+      } finally {
+        activeControllers.current.delete(item.id);
       }
+    }
 
-      // Auto-download only newly generated results from this specific run
-      if (newResults.length === 1) {
-        saveBlob(
-          new Blob([newResults[0].content], { type: "application/x-subrip;charset=utf-8" }),
-          newResults[0].filename
-        );
-      } else if (newResults.length > 1) {
-        const zip = new JSZip();
-        newResults.forEach(({ filename, content }) => zip.file(filename, content));
-        saveBlob(await zip.generateAsync({ type: "blob", compression: "DEFLATE" }), "subtitles.zip");
+    async function worker() {
+      while (cursor < pendingPool.length) {
+        const currentItem = pendingPool[cursor++];
+        if (currentItem) {
+          await processItem(currentItem);
+        }
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unexpected processing error.";
-      setNotice(message);
-      // Only mark targets that didn't finish as error
-      setItems((current) =>
-        current.map((item) =>
-          targetIds.has(item.id) && item.status !== "ready"
-            ? { ...item, status: "error", detail: message }
-            : item
-        )
+    }
+
+    try {
+      const workers = Array.from(
+        { length: Math.min(CONCURRENCY_LIMIT, pendingPool.length) },
+        () => worker()
       );
+      await Promise.all(workers);
     } finally {
-      setRunning(false);
+      if (activeControllers.current.size === 0) {
+        setRunning(false);
+      }
     }
   }
 
@@ -255,13 +296,13 @@ export function BatchUploader() {
       <div
         role="button"
         tabIndex={0}
-        onClick={() => !running && inputRef.current?.click()}
+        onClick={() => inputRef.current?.click()}
         onKeyDown={(event) => {
-          if ((event.key === "Enter" || event.key === " ") && !running) inputRef.current?.click();
+          if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
         }}
         onDragOver={(event) => {
           event.preventDefault();
-          if (!running) setDragging(true);
+          setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
@@ -269,7 +310,7 @@ export function BatchUploader() {
           dragging
             ? "border-emerald-300 bg-emerald-400/8"
             : "border-slate-700/80 bg-slate-950/25 hover:border-slate-500 hover:bg-slate-900/35"
-        } ${running ? "pointer-events-none opacity-60" : ""}`}
+        }`}
       >
         <div className="mb-5 grid size-14 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-300 shadow-[0_0_35px_rgba(52,211,153,.08)]">
           <UploadCloud size={25} strokeWidth={1.7} />
@@ -296,16 +337,23 @@ export function BatchUploader() {
                 {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
               </p>
             </div>
-            {!running && (
-              <div className="flex items-center gap-3">
-                {completedCount > 0 && (
-                  <button
-                    onClick={downloadAllReady}
-                    className="text-xs font-medium text-emerald-400 transition hover:text-emerald-300"
-                  >
-                    Download all ready
-                  </button>
-                )}
+            <div className="flex items-center gap-3">
+              {completedCount > 0 && (
+                <button
+                  onClick={downloadAllReady}
+                  className="text-xs font-medium text-emerald-400 transition hover:text-emerald-300"
+                >
+                  Download all ready
+                </button>
+              )}
+              {running ? (
+                <button
+                  onClick={cancelAllRunning}
+                  className="text-xs font-medium text-rose-400 transition hover:text-rose-300"
+                >
+                  Cancel all
+                </button>
+              ) : (
                 <button
                   onClick={() => {
                     setItems([]);
@@ -315,13 +363,18 @@ export function BatchUploader() {
                 >
                   Clear all
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           <div className="max-h-[28rem] divide-y divide-slate-800/70 overflow-y-auto border-y border-slate-800/70">
             {items.map((item) => {
               const meta = statusMeta[item.status];
+              const isInProgress =
+                item.status === "uploading" ||
+                item.status === "extracting" ||
+                item.status === "transcribing";
+
               return (
                 <div key={item.id} className="group px-5 py-4 sm:px-7">
                   <div className="flex items-start gap-4">
@@ -380,17 +433,19 @@ export function BatchUploader() {
                             </button>
                           )}
 
-                          {/* Remove button */}
-                          {!running && (
-                            <button
-                              aria-label={`Remove ${item.file.name}`}
-                              title="Remove"
-                              onClick={() => setItems((current) => current.filter(({ id }) => id !== item.id))}
-                              className="rounded-md p-1 text-slate-600 opacity-0 transition hover:bg-slate-800 hover:text-slate-300 group-hover:opacity-100 focus:opacity-100"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
+                          {/* Cancel button if running, or remove button if not running */}
+                          <button
+                            aria-label={isInProgress ? `Cancel upload for ${item.file.name}` : `Remove ${item.file.name}`}
+                            title={isInProgress ? "Cancel upload & processing" : "Remove"}
+                            onClick={() => removeItem(item.id)}
+                            className={`rounded-md p-1 transition ${
+                              isInProgress
+                                ? "text-rose-400 hover:bg-rose-500/15 hover:text-rose-300"
+                                : "text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-slate-800 hover:text-slate-300 focus:opacity-100"
+                            }`}
+                          >
+                            <X size={14} />
+                          </button>
                         </div>
                       </div>
                       <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800">
@@ -415,29 +470,39 @@ export function BatchUploader() {
 
           <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
             <div className="min-h-5 text-xs text-slate-500">{notice}</div>
-            <button
-              onClick={start}
-              disabled={running || items.length === 0}
-              className="flex min-w-48 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 text-sm font-bold text-emerald-950 shadow-[0_8px_30px_rgba(52,211,153,.15)] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {running ? (
-                <>
-                  <LoaderCircle className="spinner" size={16} /> Processing batch ({pendingCount})
-                </>
-              ) : pendingCount > 0 ? (
-                <>
-                  <Download size={16} /> Process pending ({pendingCount})
-                </>
-              ) : completedCount > 0 ? (
-                <>
-                  <Download size={16} /> Download all ({completedCount})
-                </>
-              ) : (
-                <>
-                  <Download size={16} /> Generate subtitles
-                </>
+            <div className="flex items-center gap-3">
+              {running && (
+                <button
+                  onClick={cancelAllRunning}
+                  className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                >
+                  Cancel batch
+                </button>
               )}
-            </button>
+              <button
+                onClick={start}
+                disabled={running || items.length === 0}
+                className="flex min-w-48 items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 text-sm font-bold text-emerald-950 shadow-[0_8px_30px_rgba(52,211,153,.15)] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {running ? (
+                  <>
+                    <LoaderCircle className="spinner" size={16} /> Processing batch ({pendingCount})
+                  </>
+                ) : pendingCount > 0 ? (
+                  <>
+                    <Download size={16} /> Process pending ({pendingCount})
+                  </>
+                ) : completedCount > 0 ? (
+                  <>
+                    <Download size={16} /> Download all ({completedCount})
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} /> Generate subtitles
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

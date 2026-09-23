@@ -63,19 +63,32 @@ function getFfmpegBinary(): string | undefined {
   return "ffmpeg";
 }
 
-function runFfmpeg(input: string, output: string) {
+function runFfmpeg(input: string, output: string, signal?: AbortSignal) {
   const binary = getFfmpegBinary();
   if (!binary) throw new Error("The FFmpeg binary is unavailable on this platform.");
+  if (signal?.aborted) return Promise.reject(new Error("Operation cancelled by user."));
+
   return new Promise<void>((resolve, reject) => {
     const child = spawn(/*turbopackIgnore: true*/ binary, [
       "-hide_banner", "-loglevel", "error", "-y", "-i", input,
       "-vn", "-ac", "1", "-ar", "16000",
       "-c:a", "libmp3lame", "-b:a", "48k", output,
     ], { windowsHide: true });
+
+    if (signal) {
+      const onAbort = () => {
+        child.kill("SIGTERM");
+        reject(new Error("Operation cancelled by user."));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      child.once("close", () => signal.removeEventListener("abort", onAbort));
+    }
+
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk}`.slice(-4_000); });
     child.once("error", reject);
     child.once("close", (code: number | null) => {
+      if (signal?.aborted) return reject(new Error("Operation cancelled by user."));
       if (code === 0) return resolve();
       const err = stderr.trim();
       if (
@@ -185,16 +198,21 @@ export async function POST(request: Request) {
         const inputPath = path.join(workDir, `input${ext}`);
         const audioPath = path.join(workDir, "audio.mp3");
         try {
+          if (request.signal.aborted) return;
           send({ type: "status", id, status: "extracting" });
           await writeFile(inputPath, Buffer.from(await file.arrayBuffer()));
-          await runFfmpeg(inputPath, audioPath);
+          if (request.signal.aborted) return;
+          await runFfmpeg(inputPath, audioPath, request.signal);
+          if (request.signal.aborted) return;
           send({ type: "status", id, status: "transcribing" });
           const transcript = await transcribeWithRetry(groq, audioPath, (message) => send({ type: "status", id, status: "transcribing", message }));
+          if (request.signal.aborted) return;
           const srt = toSrt(transcript.segments ?? []);
           send({ type: "result", id, filename: subtitleName(file.name), content: srt });
           send({ type: "status", id, status: "ready" });
           succeeded += 1;
         } catch (error) {
+          if (request.signal.aborted) return;
           failed += 1;
           send({ type: "status", id, status: "error", message: readableError(error) });
         } finally {
