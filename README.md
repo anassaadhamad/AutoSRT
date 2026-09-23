@@ -20,13 +20,17 @@
   Zero setup headaches, zero data retention, AI translation to 16+ languages, bilingual mode, fully dockerized, and enterprise-hardened.
 </p>
 
-[🌐 **Live Demo**](https://autosrt.anas.lol) • [🪟 **Download .EXE**](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) • [Quick Start](#-quick-start) • [Desktop App](#-windows-desktop-app-autosrtexe---100-local-edition) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [بالعربية](#-نظرة-سريعة-بالعربية)
+[🌐 **Live Demo**](https://autosrt.anas.lol) • [🪟 **Download .EXE**](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) • [Web Features](#-interactive-web-app-features) • [Desktop App](#-windows-desktop-app-autosrtexe---100-local-edition) • [API Docs](#-api-reference) • [Architecture](#-architecture--workflow) • [بالعربية](#-دليل-المشروع-بالكامل-بالعربية)
+
+<br/>
+
+<img src="media/1_hero_banner.jpg" alt="AutoSRT Hero Showcase" width="100%" />
 
 </div>
 
 ---
 
-## ✨ Key Features
+## ✨ Key Features & Capabilities
 
 - **🚀 Lightning-Fast AI Transcription**: Leverages **Groq Whisper Large v3 Turbo** on specialized LPUs to transcribe speech up to 216x faster than real-time.
 - **🌍 AI Multi-Language Subtitle Translation**: Automatically translate extracted subtitles into **16+ major world languages** (Arabic, English, Spanish, French, German, Turkish, Italian, Russian, Chinese, Japanese, Korean, Portuguese, Indonesian, Hindi, Urdu, etc.) powered by Groq's high-throughput LLMs.
@@ -49,7 +53,45 @@
 
 ---
 
+## 🖥️ Interactive Web App Features
+
+The web frontend (`components/batch-uploader.tsx`) is designed for maximum productivity and instant responsiveness:
+
+1. **Intuitive Drag & Drop Zone**:
+   - Visual drag-over highlight with real-time file validation.
+   - Accepts both video and audio files simultaneously up to 500 MB per file.
+2. **Translation Toolbar**:
+   - Clean glassmorphism toolbar located directly above the queue.
+   - **Language Selector**: Choose between Original (No translation) or 16+ global languages.
+   - **Bilingual Subtitles Toggle**: Easily turn on dual-line subtitles (`Original\nTranslation`).
+   - Preferences are automatically persisted across visits in `localStorage`.
+3. **Live NDJSON Event Streaming**:
+   - Real-time status indicators per file:
+     - `🎵 Extracting audio with FFmpeg...`
+     - `⚡ Transcribing speech with Groq Whisper...`
+     - `🌍 Translating subtitles with Groq AI (X/Y)...`
+     - `✅ Ready`
+4. **👁️ In-Browser Subtitle Preview Modal**:
+   - Click the eye icon next to any finished file to preview the generated subtitles directly in a syntax-highlighted modal without needing to download or open a video player.
+5. **📦 Client-Side ZIP Packaging (`subtitles.zip`)**:
+   - Generates and downloads a clean zip bundle containing all completed `.srt` files on the client side via `JSZip`, saving server bandwidth and delivering instant downloads.
+6. **🔑 BYOK (Bring Your Own Key) Dialog**:
+   - Click the key icon in the navigation bar to enter your personal free Groq API key.
+   - The key is saved locally in browser `localStorage` and sent over an authenticated HTTPS header (`x-groq-api-key`), bypassing shared server quotas.
+7. **Queue Preservation & Duplicate Elimination**:
+   - Completed files remain safely in the queue when new files are dropped in. Only pending or retried items are uploaded, saving time and API tokens.
+8. **Instant Granular Cancellation**:
+   - Each row features an `✖` abort button. Clicking it instantly triggers an `AbortController` signal that terminates the active network stream and halts the server-side FFmpeg process.
+
+---
+
 ## 🏗️ Architecture & Workflow
+
+<div align="center">
+  <img src="media/3_architecture_pipeline.jpg" alt="AutoSRT Architecture Pipeline" width="100%" />
+</div>
+
+<br/>
 
 ```mermaid
 flowchart TD
@@ -73,32 +115,32 @@ flowchart TD
 
 ## 🎛️ Supported Formats & Languages
 
-### Media Formats
+### Media Formats Supported
 | Category | Formats Supported |
 |---|---|
 | **Video** | `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mpeg`, `.mpg`, `.wmv`, `.flv`, `.3gp` |
 | **Audio** | `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`, `.wma`, `.opus`, `.weba` |
 | **Output** | Standard SubRip Subtitles (`.srt`) with precise `HH:MM:SS,mmm` millisecond timestamps |
 
-### Subtitle Translation Languages
-| Code | Language | Arabic Name | Supported Modes |
-|---|---|---|---|
-| `none` | Original Language | اللغة الأصلية | Monolingual |
-| `ar` | Arabic | العربية | Single / Bilingual |
-| `en` | English | الإنجليزية | Single / Bilingual |
-| `es` | Spanish | الإسبانية | Single / Bilingual |
-| `fr` | French | الفرنسية | Single / Bilingual |
-| `de` | German | الألمانية | Single / Bilingual |
-| `tr` | Turkish | التركية | Single / Bilingual |
-| `it` | Italian | الإيطالية | Single / Bilingual |
-| `ru` | Russian | الروسية | Single / Bilingual |
-| `zh` | Simplified Chinese | الصينية | Single / Bilingual |
-| `ja` | Japanese | اليابانية | Single / Bilingual |
-| `ko` | Korean | الكورية | Single / Bilingual |
-| `pt` | Portuguese | البرتغالية | Single / Bilingual |
-| `id` | Indonesian | الإندونيسية | Single / Bilingual |
-| `hi` | Hindi | الهندية | Single / Bilingual |
-| `ur` | Urdu | الأردية | Single / Bilingual |
+### Subtitle Translation Matrix
+| Code | Language | Arabic Name | Supported Modes | Model Engine |
+|---|---|---|---|---|
+| `none` | Original Language | اللغة الأصلية | Monolingual | Groq Whisper Large v3 Turbo |
+| `ar` | Arabic | العربية | Single / Bilingual | **Allam-2-7b** (18ms) + GPT-OSS Fallback |
+| `en` | English | الإنجليزية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `es` | Spanish | الإسبانية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `fr` | French | الفرنسية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `de` | German | الألمانية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `tr` | Turkish | التركية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `it` | Italian | الإيطالية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `ru` | Russian | الروسية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `zh` | Simplified Chinese | الصينية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `ja` | Japanese | اليابانية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `ko` | Korean | الكورية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `pt` | Portuguese | البرتغالية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `id` | Indonesian | الإندونيسية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `hi` | Hindi | الهندية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
+| `ur` | Urdu | الأردية | Single / Bilingual | Groq GPT-OSS-120B / Qwen 27B |
 
 ---
 
@@ -106,11 +148,17 @@ flowchart TD
 
 AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** that runs completely on your local machine with no reliance on external servers:
 
+<div align="center">
+  <img src="media/2_desktop_app.jpg" alt="AutoSRT Desktop App" width="100%" />
+</div>
+
+<br/>
+
 [![Download AutoSRT.exe](https://img.shields.io/badge/Download-AutoSRT.exe_(92_KB)-6366F1?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe)
 
 ### Highlights of the Desktop Edition:
-- **🔒 100% Local & Private**: Direct communication between your PC and Groq's official API (`https://api.groq.com`). Zero intermediate servers, zero logs.
-- **🌍 Built-in Translation & Bilingual Subtitles**: Choose your target language directly from the toolbar with optional bilingual dual-line subtitle generation.
+- **🔒 100% Local & Private**: Direct communication between your PC and Groq's official API (`https://api.groq.com`). Zero intermediate servers, zero data stored elsewhere.
+- **🌍 Built-in Translation & Bilingual Subtitles**: Choose your target language directly from the top toolbar with optional bilingual dual-line subtitle generation.
 - **🔑 Bring Your Own Key**: Enter your free Groq API key once. It is saved locally in `%APPDATA%\AutoSRT\settings.ini`.
 - **📂 Drag & Drop Files & Folders**: Drop multiple video/audio files or entire folders into the queue with a single mouse drag.
 - **⚡ Local FFmpeg Engine**: Automatically detects FFmpeg in your PATH or app folder. If missing, it features a **1-click automatic download** of portable FFmpeg directly into `%LOCALAPPDATA%\AutoSRT\bin`.
@@ -122,11 +170,50 @@ AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** t
 
 ---
 
+## 📡 API Reference
+
+AutoSRT exposes clean REST & NDJSON streaming endpoints for developer integrations:
+
+### 1. `POST /api/transcribe`
+Submits media files for transcription and optional translation.
+
+- **Content-Type**: `multipart/form-data`
+- **Headers**:
+  - `x-groq-api-key` *(optional)*: User's personal Groq API key.
+- **Form Fields**:
+  - `files`: One or more media files (binary).
+  - `ids`: Matching unique IDs for client queue synchronization.
+  - `targetLang`: Target translation language code (`none`, `ar`, `en`, `es`, etc.).
+  - `bilingual`: Boolean string (`"true"` or `"false"`).
+- **Response**: `application/x-ndjson` (chunked stream)
+  ```json
+  {"id": "...", "status": "processing", "message": "Extracting audio with FFmpeg...", "progress": 20}
+  {"id": "...", "status": "processing", "message": "Transcribing speech with Groq Whisper...", "progress": 60}
+  {"id": "...", "status": "processing", "message": "Translating subtitles with Groq AI...", "progress": 85}
+  {"id": "...", "status": "ready", "message": "Subtitles generated successfully", "progress": 100, "srtContent": "1\n00:00:01,000 --> 00:00:04,000\nHello world\nمرحباً بالعالم\n\n"}
+  ```
+
+### 2. `GET /api/health`
+Health check endpoint for uptime monitoring and zero-downtime container deployments.
+
+- **Response**: `application/json`
+  ```json
+  {
+    "status": "ok",
+    "app": "AutoSRT",
+    "timestamp": "2026-09-23T06:00:00.000Z",
+    "ffmpeg": true,
+    "groqConfigured": true
+  }
+  ```
+
+---
+
 ## 🚀 Quick Start (Web Application)
 
 ### 1. Prerequisites
 - **Node.js**: v20 or v22+
-- **Groq API Key**: Obtain a free/production key from [Groq Console](https://console.groq.com/keys).
+- **Groq API Key**: Obtain a free key from [Groq Console](https://console.groq.com/keys).
 
 ### 2. Local Setup
 ```bash
@@ -218,21 +305,7 @@ AutoSRT includes an industry-grade defense-in-depth security model:
 
 ---
 
-## 🇸🇦 نظرة سريعة بالعربية
-
-مشروع **AutoSRT** هو حل متكامل ومجاني مفتوح المصدر لتحويل الصوت والفيديو إلى ملفات ترجمة احترافية (`.srt`) متزامنة بالمللي ثانية، مع إمكانية **ترجمة النصوص إلى أكثر من 16 لغة** حول العالم وخيار **الترجمة الثنائية (Bilingual Subtitles)**.
-
-### أهم المميزات:
-- **نسخة ديسكتوب خفيفة جداً (92 KB)**: تعمل مباشرة على ويندوز 10 و 11 بدون أي تثبيتات أو برامج إضافية، وتتصل مباشرة بـ Groq بدون وسيط.
-- **تطبيق ويب تفاعلي**: مبني بأحدث تقنيات Next.js 16 مع دعم السحب والإفلات والتحميل الفردي أو الجماعي بملف مضغوط `subtitles.zip`.
-- **نظام ذكي للتعامل مع حدود الاستخدام (Rate Limits)**:
-  - الاعتماد على نموذج **Allam-2-7b** العربي فائق السرعة لترجمة العربية في 18 ميلي ثانية وتوفير 90% من الحصة.
-  - إيقاف مؤقت ذكي واستئناف تلقائي مع عداد تنازلي حي في حال الوصول لحدود الحساب المجاني.
-- **حفظ الخصوصية 100%**: لا يتم تخزين أي ملفات أو نصوص، ويتم حذف الملفات المؤقتة فور الانتهاء مباشرة.
-
----
-
-## ⚙️ Configuration
+## ⚙️ Environment Configuration
 
 All configuration is driven through environment variables:
 
@@ -248,24 +321,28 @@ All configuration is driven through environment variables:
 
 ---
 
-## 🩺 Healthcheck & Monitoring
+## 🇸🇦 دليل المشروع بالكامل بالعربية
 
-AutoSRT provides a dedicated health check endpoint for uptime monitors and Coolify rolling deployments:
+مشروع **AutoSRT** هو منصة متكاملة ومفتوحة المصدر لتحويل الصوت والفيديو إلى ملفات ترجمة احترافية (`.srt`) متزامنة بالمللي ثانية، مع إمكانية **ترجمة النصوص إلى أكثر من 16 لغة** وخيار **الترجمة الثنائية (Bilingual Subtitles)**.
 
-```bash
-curl http://localhost:3000/api/health
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "app": "AutoSRT",
-  "timestamp": "2026-09-23T06:00:00.000Z",
-  "ffmpeg": true,
-  "groqConfigured": true
-}
-```
+### 🌟 تفاصيل مميزات الويب والديسكتوب:
+1. **تطبيق ويب عصري وسريع (Next.js 16)**:
+   - دعم السحب والإفلات للملفات الصوتية والمرئية معاً.
+   - نافذة معاينة فورية داخل المتصفح (`👁️ عرض`) بدون الحاجة لتحميل الملف أو مشغل فيديو خارجي.
+   - تنزيل الملفات فردياً أو كدفعة كاملة مضغوطة (`subtitles.zip`) يتم تجميعها في المتصفح عبر `JSZip`.
+   - إمكانية إلغاء أي ملف أثناء معالجته فوراً بضغطة زر `✖` وتحرير موارد الخادم.
+   - الحفاظ على الملفات المكتملة عند إضافة ملفات جديدة وتجنب تكرار المعالجة أو استهلاك الحصة.
+2. **نسخة ديسكتوب خفيفة ومستقلة (AutoSRT.exe - 92 KB)**:
+   - تعمل مباشرة على Windows 10 و 11 بدون أي تثبيتات أو برامج إضافية.
+   - تنزيل FFmpeg تلقائياً بنقرة واحدة إذا لم يكن مثبتاً على جهازك.
+   - اتصال محلي ومباشر 100% بين جهازك وسيرفرات Groq لحفظ كامل الخصوصية.
+   - واجهة مستخدم ثنائية اللغة تدعم العربية والإنجليزية بتبديل فوري لتنسيق RTL.
+3. **نظام ذكي للتعامل مع حدود الاستخدام (Rate Limits)**:
+   - استخدام نموذج **Allam-2-7b** العربي فائق السرعة (18ms) الذي يوفر 90% من استهلاك التوكنز للترجمات العربية.
+   - تهدئة ذكية وتوقف مؤقت مع عداد تنازلي واستئناف تلقائي في حال بلوغ الحد المؤقت دون أي ضياع للملف.
+4. **أمان وحفظ خصوصية 100%**:
+   - نموذج Stateless يحذف الملفات المؤقتة فور اكتمال الترجمة.
+   - حماية كاملة ضد هجمات CSRF و SSRF وفحص تواقيع الملفات الرقمية (Magic Bytes).
 
 ---
 
