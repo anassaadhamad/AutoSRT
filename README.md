@@ -101,13 +101,21 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🪟 Windows Desktop App (`AutoSRT.exe`)
+## 🪟 Windows Desktop App (`AutoSRT.exe` - 100% Local Edition)
 
-For maximum convenience, you can run AutoSRT as a native Windows desktop client with zero installation:
+AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** that runs completely on your local machine with no reliance on external servers:
 
-1. Download [`AutoSRT.exe`](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) (only 21 KB).
-2. Double-click `AutoSRT.exe` on any Windows 10/11 machine.
-3. It launches instantly in a dedicated frameless desktop window with hardware acceleration and full drag-and-drop batch upload support!
+[![Download AutoSRT.exe](https://img.shields.io/badge/Download-AutoSRT.exe_(64_KB)-6366F1?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe)
+
+### Highlights of the Desktop Edition:
+- **🔒 100% Local & Private**: Direct communication between your PC and Groq's official API (`https://api.groq.com`). Zero intermediate servers, zero logs.
+- **🔑 Bring Your Own Key**: Enter your free Groq API key once. It is saved locally in `%APPDATA%\AutoSRT\settings.ini`.
+- **📂 Drag & Drop Files & Folders**: Drop multiple video/audio files or entire folders into the queue with a single mouse drag.
+- **⚡ Local FFmpeg Engine**: Automatically detects FFmpeg in your PATH or app folder. If missing, it features a **1-click automatic download** of portable FFmpeg directly into `%LOCALAPPDATA%\AutoSRT\bin`.
+- **🎬 Smart Speech Audio Extraction**: Converts video files into ultra-compact, crystal-clear 16kHz mono audio streams before sending to Groq, turning multi-gigabyte videos into ~15MB in seconds.
+- **💾 Automatic `.srt` Placement**: Subtitles are saved directly next to your video files (e.g. `Lecture.mp4` ➡️ `Lecture.srt`) or in any custom folder you designate.
+- **👁️ Built-in Subtitle Viewer**: One-click to preview the generated subtitles or reveal the file in Windows Explorer.
+- **🪶 Ultra-Lightweight (64 KB)**: No heavy Electron, no Python runtime. Runs natively on any Windows 10 or 11 system out of the box!
 
 ---
 
