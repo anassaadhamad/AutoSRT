@@ -64,13 +64,24 @@ function runFfmpeg(input: string, output: string) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(/*turbopackIgnore: true*/ binary, [
       "-hide_banner", "-loglevel", "error", "-y", "-i", input,
-      "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+      "-vn", "-ac", "1", "-ar", "16000",
       "-c:a", "libmp3lame", "-b:a", "48k", output,
     ], { windowsHide: true });
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk}`.slice(-4_000); });
     child.once("error", reject);
-    child.once("close", (code: number | null) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `FFmpeg exited with code ${code}.`)));
+    child.once("close", (code: number | null) => {
+      if (code === 0) return resolve();
+      const err = stderr.trim();
+      if (
+        err.includes("does not contain any stream") ||
+        err.includes("matches no streams") ||
+        err.includes("no audio stream")
+      ) {
+        return reject(new Error("الفيديو لا يحتوي على أي مسار صوتي (Audio track) لتفريغه."));
+      }
+      return reject(new Error(err || `FFmpeg exited with code ${code}.`));
+    });
   });
 }
 
