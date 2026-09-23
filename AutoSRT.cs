@@ -72,6 +72,8 @@ namespace AutoSRTDesktop
         public string GroqApiKey = "";
         public string Model = "whisper-large-v3-turbo";
         public string Language = "auto";
+        public string TargetLanguage = "none";
+        public bool BilingualSubtitles = false;
         public bool SaveAlongsideMedia = true;
         public string CustomOutputDir = "";
         public string CustomFfmpegPath = "";
@@ -113,6 +115,8 @@ namespace AutoSRTDesktop
                                 case "GroqApiKey": settings.GroqApiKey = val; break;
                                 case "Model": settings.Model = val; break;
                                 case "Language": settings.Language = val; break;
+                                case "TargetLanguage": settings.TargetLanguage = val; break;
+                                case "BilingualSubtitles": settings.BilingualSubtitles = (val.ToLower() == "true"); break;
                                 case "SaveAlongsideMedia": settings.SaveAlongsideMedia = (val.ToLower() == "true"); break;
                                 case "CustomOutputDir": settings.CustomOutputDir = val; break;
                                 case "CustomFfmpegPath": settings.CustomFfmpegPath = val; break;
@@ -135,6 +139,8 @@ namespace AutoSRTDesktop
                 sb.AppendLine("GroqApiKey=" + (GroqApiKey ?? ""));
                 sb.AppendLine("Model=" + (Model ?? "whisper-large-v3-turbo"));
                 sb.AppendLine("Language=" + (Language ?? "auto"));
+                sb.AppendLine("TargetLanguage=" + (TargetLanguage ?? "none"));
+                sb.AppendLine("BilingualSubtitles=" + (BilingualSubtitles ? "true" : "false"));
                 sb.AppendLine("SaveAlongsideMedia=" + (SaveAlongsideMedia ? "true" : "false"));
                 sb.AppendLine("CustomOutputDir=" + (CustomOutputDir ?? ""));
                 sb.AppendLine("CustomFfmpegPath=" + (CustomFfmpegPath ?? ""));
@@ -350,6 +356,8 @@ namespace AutoSRTDesktop
             string audioFilePath,
             string model,
             string language,
+            string targetLanguage,
+            bool bilingual,
             CancellationToken ct,
             Action<string> statusCallback)
         {
@@ -409,7 +417,17 @@ namespace AutoSRTDesktop
                         if (response.IsSuccessStatusCode)
                         {
                             string jsonContent = await response.Content.ReadAsStringAsync();
-                            return ConvertVerboseJsonToSrt(jsonContent);
+                            var jss = new JavaScriptSerializer();
+                            jss.MaxJsonLength = int.MaxValue;
+                            var result = jss.Deserialize<GroqTranscriptionResult>(jsonContent);
+
+                            // Optional AI Translation step
+                            if (!string.IsNullOrEmpty(targetLanguage) && targetLanguage != "none" && result != null && result.segments != null && result.segments.Count > 0)
+                            {
+                                await TranslateSegmentsAsync(apiKey, result.segments, targetLanguage, bilingual, ct, statusCallback);
+                            }
+
+                            return ConvertResultToSrt(result);
                         }
 
                         string errBody = await response.Content.ReadAsStringAsync();
@@ -430,12 +448,157 @@ namespace AutoSRTDesktop
             }
         }
 
-        private static string ConvertVerboseJsonToSrt(string json)
+        private static readonly string[] TranslationModels = new string[]
         {
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b"
+        };
+
+        public static async Task TranslateSegmentsAsync(
+            string apiKey,
+            List<GroqSegment> segments,
+            string targetLanguage,
+            bool bilingual,
+            CancellationToken ct,
+            Action<string> statusCallback)
+        {
+            if (segments == null || segments.Count == 0) return;
+
+            string targetName = GetTargetLanguageEnglishName(targetLanguage);
+            int batchSize = 35;
             var jss = new JavaScriptSerializer();
             jss.MaxJsonLength = int.MaxValue;
-            var result = jss.Deserialize<GroqTranscriptionResult>(json);
 
+            for (int i = 0; i < segments.Count; i += batchSize)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                int count = Math.Min(batchSize, segments.Count - i);
+                List<object> batchList = new List<object>();
+                for (int j = 0; j < count; j++)
+                {
+                    int segIndex = i + j;
+                    batchList.Add(new { id = segIndex, text = segments[segIndex].text.Trim() });
+                }
+
+                statusCallback(string.Format(
+                    I18n.T("Translating subtitles to {0} ({1}/{2})...", "جاري ترجمة النصوص إلى {0} ({1}/{2})..."),
+                    targetName,
+                    Math.Min(i + count, segments.Count),
+                    segments.Count
+                ));
+
+                string userJson = jss.Serialize(new { segments = batchList });
+                string prompt = "You are a professional subtitle translator. Translate each subtitle text into " + targetName + ". Output ONLY valid JSON: {\"translations\": [{\"id\": 0, \"text\": \"...\"}]}. Maintain exact same IDs and natural phrasing.";
+
+                bool success = false;
+                foreach (string tModel in TranslationModels)
+                {
+                    try
+                    {
+                        var reqBody = new
+                        {
+                            model = tModel,
+                            temperature = 0.1,
+                            response_format = new { type = "json_object" },
+                            messages = new object[]
+                            {
+                                new { role = "system", content = prompt },
+                                new { role = "user", content = userJson }
+                            }
+                        };
+
+                        string jsonPayload = jss.Serialize(reqBody);
+                        using (var req = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/chat/completions"))
+                        {
+                            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
+                            req.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                            using (var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct))
+                            {
+                                if (resp.IsSuccessStatusCode)
+                                {
+                                    string respBody = await resp.Content.ReadAsStringAsync();
+                                    var chatResp = jss.Deserialize<Dictionary<string, object>>(respBody);
+                                    if (chatResp != null && chatResp.ContainsKey("choices"))
+                                    {
+                                        var choices = (object[])chatResp["choices"];
+                                        if (choices.Length > 0)
+                                        {
+                                            var firstChoice = (Dictionary<string, object>)choices[0];
+                                            var msg = (Dictionary<string, object>)firstChoice["message"];
+                                            string content = (string)msg["content"];
+
+                                            var transObj = jss.Deserialize<Dictionary<string, object>>(content);
+                                            if (transObj != null && transObj.ContainsKey("translations"))
+                                            {
+                                                var transList = (object[])transObj["translations"];
+                                                foreach (Dictionary<string, object> item in transList)
+                                                {
+                                                    if (item.ContainsKey("id") && item.ContainsKey("text"))
+                                                    {
+                                                        int id = Convert.ToInt32(item["id"]);
+                                                        string trText = (string)item["text"];
+                                                        if (id >= 0 && id < segments.Count && !string.IsNullOrWhiteSpace(trText))
+                                                        {
+                                                            if (bilingual)
+                                                            {
+                                                                segments[id].text = segments[id].text.Trim() + "\r\n" + trText.Trim();
+                                                            }
+                                                            else
+                                                            {
+                                                                segments[id].text = trText.Trim();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                success = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                else if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                                {
+                                    throw new Exception(I18n.T("Invalid Groq API Key for translation.", "مفتاح Groq غير صالح للترجمة."));
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch { }
+
+                    if (success) break;
+                }
+            }
+        }
+
+        public static string GetTargetLanguageEnglishName(string code)
+        {
+            switch (code)
+            {
+                case "ar": return "Arabic";
+                case "en": return "English";
+                case "fr": return "French";
+                case "es": return "Spanish";
+                case "de": return "German";
+                case "tr": return "Turkish";
+                case "it": return "Italian";
+                case "ru": return "Russian";
+                case "zh": return "Simplified Chinese";
+                case "ja": return "Japanese";
+                case "ko": return "Korean";
+                case "pt": return "Portuguese";
+                case "id": return "Indonesian";
+                case "hi": return "Hindi";
+                case "ur": return "Urdu";
+                default: return code;
+            }
+        }
+
+        private static string ConvertResultToSrt(GroqTranscriptionResult result)
+        {
             if (result == null || result.segments == null || result.segments.Count == 0)
             {
                 if (result != null && !string.IsNullOrWhiteSpace(result.text))
@@ -552,11 +715,34 @@ namespace AutoSRTDesktop
         private ComboBox cmbModel;
         private Label lblLang;
         private ComboBox cmbLang;
+        private Label lblTargetLang;
+        private ComboBox cmbTargetLang;
+        private CheckBox chkBilingual;
         private CheckBox chkAlongside;
         private TextBox txtOutputDir;
         private Button btnBrowseOutput;
         private Label lblFfmpegStatus;
         private Button btnFfmpegAction;
+
+        public static readonly string[][] AvailableTargetLanguages = new string[][]
+        {
+            new string[] { "none", "None (Original Language)", "بدون ترجمة (اللغة الأصلية فقط)" },
+            new string[] { "ar", "Arabic (العربية)", "العربية (Arabic)" },
+            new string[] { "en", "English", "الإنجليزية (English)" },
+            new string[] { "fr", "French (Français)", "الفرنسية (French)" },
+            new string[] { "es", "Spanish (Español)", "الإسبانية (Spanish)" },
+            new string[] { "de", "German (Deutsch)", "الألمانية (German)" },
+            new string[] { "tr", "Turkish (Türkçe)", "التركية (Turkish)" },
+            new string[] { "it", "Italian (Italiano)", "الإيطالية (Italian)" },
+            new string[] { "ru", "Russian (Русский)", "الروسية (Russian)" },
+            new string[] { "zh", "Chinese (中文)", "الصينية (Chinese)" },
+            new string[] { "ja", "Japanese (日本語)", "اليابانية (Japanese)" },
+            new string[] { "ko", "Korean (한국어)", "الكورية (Korean)" },
+            new string[] { "pt", "Portuguese (Português)", "البرتغالية (Portuguese)" },
+            new string[] { "id", "Indonesian (Bahasa)", "الإندونيسية (Indonesian)" },
+            new string[] { "hi", "Hindi (हिन्दी)", "الهندية (Hindi)" },
+            new string[] { "ur", "Urdu (اردو)", "الأوردية (Urdu)" }
+        };
 
         // Actions Controls
         private Panel pnlActions;
@@ -683,6 +869,18 @@ namespace AutoSRTDesktop
             cmbLang.Items.Add(I18n.T("Turkish (tr)", "التركية (tr)"));
             cmbLang.SelectedIndex = prevLangIdx >= 0 && prevLangIdx < cmbLang.Items.Count ? prevLangIdx : 0;
 
+            // Target Language ComboBox & Bilingual
+            lblTargetLang.Text = I18n.T("Translate To:", "ترجمة إلى:");
+            chkBilingual.Text = I18n.T("Bilingual Subtitles (Original + Translated)", "ترجمة مزدوجة (الأصل + المترجم)");
+
+            int prevTargetIdx = cmbTargetLang.SelectedIndex >= 0 ? cmbTargetLang.SelectedIndex : GetTargetLanguageIndex(settings.TargetLanguage);
+            cmbTargetLang.Items.Clear();
+            foreach (var langItem in AvailableTargetLanguages)
+            {
+                cmbTargetLang.Items.Add(isAr ? langItem[2] : langItem[1]);
+            }
+            cmbTargetLang.SelectedIndex = prevTargetIdx >= 0 && prevTargetIdx < cmbTargetLang.Items.Count ? prevTargetIdx : 0;
+
             // Action Bar Texts
             btnAddFiles.Text = I18n.T("➕ Add Video / Audio Files", "➕ إضافة ملفات فيديو / صوت");
             btnAddFolder.Text = I18n.T("📁 Add Entire Folder", "📁 إضافة مجلد كامل");
@@ -739,6 +937,25 @@ namespace AutoSRTDesktop
                 case 6: return "tr";
                 default: return "auto";
             }
+        }
+
+        private int GetTargetLanguageIndex(string code)
+        {
+            for (int i = 0; i < AvailableTargetLanguages.Length; i++)
+            {
+                if (string.Equals(AvailableTargetLanguages[i][0], code, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return 0;
+        }
+
+        private string GetSelectedTargetLanguageCode()
+        {
+            if (cmbTargetLang.SelectedIndex >= 0 && cmbTargetLang.SelectedIndex < AvailableTargetLanguages.Length)
+            {
+                return AvailableTargetLanguages[cmbTargetLang.SelectedIndex][0];
+            }
+            return "none";
         }
         #endregion
 
@@ -846,14 +1063,14 @@ namespace AutoSRTDesktop
                 }
             };
 
-            // Row 1: API Key & Model & Audio Language
+            // Row 1: API Key & Model & Audio Language & Target Translation Language
             lblKey = new Label { AutoSize = true, Location = new Point(15, 16), ForeColor = colorTextMuted };
             txtApiKey = new TextBox
             {
                 Text = settings.GroqApiKey,
                 UseSystemPasswordChar = true,
                 Location = new Point(125, 13),
-                Width = 260,
+                Width = 200,
                 BackColor = colorBg,
                 ForeColor = colorText,
                 BorderStyle = BorderStyle.FixedSingle,
@@ -870,7 +1087,7 @@ namespace AutoSRTDesktop
                 Text = "👁",
                 Width = 32,
                 Height = 25,
-                Location = new Point(390, 12),
+                Location = new Point(330, 12),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = colorCardBorder,
                 ForeColor = colorText,
@@ -883,12 +1100,12 @@ namespace AutoSRTDesktop
                 btnToggleKey.Text = txtApiKey.UseSystemPasswordChar ? "👁" : "🔒";
             };
 
-            lblModel = new Label { AutoSize = true, Location = new Point(440, 16), ForeColor = colorTextMuted };
+            lblModel = new Label { AutoSize = true, Location = new Point(375, 16), ForeColor = colorTextMuted };
             cmbModel = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(500, 13),
-                Width = 220,
+                Location = new Point(430, 13),
+                Width = 180,
                 BackColor = colorBg,
                 ForeColor = colorText,
                 FlatStyle = FlatStyle.Flat
@@ -899,12 +1116,12 @@ namespace AutoSRTDesktop
                 settings.Save();
             };
 
-            lblLang = new Label { AutoSize = true, Location = new Point(735, 16), ForeColor = colorTextMuted };
+            lblLang = new Label { AutoSize = true, Location = new Point(620, 16), ForeColor = colorTextMuted };
             cmbLang = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(815, 13),
-                Width = 140,
+                Location = new Point(700, 13),
+                Width = 115,
                 BackColor = colorBg,
                 ForeColor = colorText,
                 FlatStyle = FlatStyle.Flat
@@ -915,12 +1132,41 @@ namespace AutoSRTDesktop
                 settings.Save();
             };
 
-            // Row 2: Output Options & FFmpeg Status
+            lblTargetLang = new Label { AutoSize = true, Location = new Point(825, 16), ForeColor = colorTextMuted };
+            cmbTargetLang = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(915, 13),
+                Width = 175,
+                BackColor = colorBg,
+                ForeColor = colorText,
+                FlatStyle = FlatStyle.Flat
+            };
+            cmbTargetLang.SelectedIndexChanged += delegate
+            {
+                settings.TargetLanguage = GetSelectedTargetLanguageCode();
+                settings.Save();
+            };
+
+            // Row 2: Bilingual, Output Options & FFmpeg Status
+            chkBilingual = new CheckBox
+            {
+                Checked = settings.BilingualSubtitles,
+                AutoSize = true,
+                Location = new Point(15, 52),
+                ForeColor = colorText
+            };
+            chkBilingual.CheckedChanged += delegate
+            {
+                settings.BilingualSubtitles = chkBilingual.Checked;
+                settings.Save();
+            };
+
             chkAlongside = new CheckBox
             {
                 Checked = settings.SaveAlongsideMedia,
                 AutoSize = true,
-                Location = new Point(15, 52),
+                Location = new Point(230, 52),
                 ForeColor = colorText
             };
             chkAlongside.CheckedChanged += delegate
@@ -934,8 +1180,8 @@ namespace AutoSRTDesktop
             txtOutputDir = new TextBox
             {
                 Text = settings.CustomOutputDir,
-                Location = new Point(340, 50),
-                Width = 210,
+                Location = new Point(495, 50),
+                Width = 175,
                 BackColor = colorBg,
                 ForeColor = colorText,
                 BorderStyle = BorderStyle.FixedSingle,
@@ -949,9 +1195,9 @@ namespace AutoSRTDesktop
 
             btnBrowseOutput = new Button
             {
-                Width = 110,
+                Width = 100,
                 Height = 25,
-                Location = new Point(555, 49),
+                Location = new Point(675, 49),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = colorCardBorder,
                 ForeColor = colorText,
@@ -975,15 +1221,15 @@ namespace AutoSRTDesktop
             lblFfmpegStatus = new Label
             {
                 AutoSize = true,
-                Location = new Point(680, 54),
+                Location = new Point(785, 54),
                 Font = new Font("Segoe UI", 9f, FontStyle.Bold)
             };
 
             btnFfmpegAction = new Button
             {
-                Width = 140,
+                Width = 135,
                 Height = 25,
-                Location = new Point(940, 50),
+                Location = new Point(995, 50),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(51, 65, 85),
                 ForeColor = colorText,
@@ -1000,7 +1246,10 @@ namespace AutoSRTDesktop
             pnl.Controls.Add(cmbModel);
             pnl.Controls.Add(lblLang);
             pnl.Controls.Add(cmbLang);
+            pnl.Controls.Add(lblTargetLang);
+            pnl.Controls.Add(cmbTargetLang);
 
+            pnl.Controls.Add(chkBilingual);
             pnl.Controls.Add(chkAlongside);
             pnl.Controls.Add(txtOutputDir);
             pnl.Controls.Add(btnBrowseOutput);
@@ -1678,6 +1927,8 @@ namespace AutoSRTDesktop
                             audioToSend,
                             settings.Model,
                             settings.Language,
+                            settings.TargetLanguage,
+                            settings.BilingualSubtitles,
                             cts.Token,
                             delegate(string stepMsg)
                             {

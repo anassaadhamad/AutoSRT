@@ -27,8 +27,10 @@
 ## ✨ Key Features
 
 - **🚀 Lightning-Fast AI Transcription**: Leverages **Groq Whisper Large v3 Turbo** on specialized LPUs to transcribe speech up to 216x faster than real-time.
+- **🌍 AI Multi-Language Subtitle Translation**: Automatically translate extracted subtitles into **16+ major world languages** (Arabic, English, Spanish, French, German, Turkish, Italian, Russian, Chinese, Japanese, Korean, Portuguese, Indonesian, Hindi, Urdu, etc.) powered by Groq's high-throughput LLMs.
+- **🔤 Bilingual Subtitles Mode**: Option to generate bilingual subtitles displaying both the original spoken line and the translated line simultaneously (`Original\nTranslation`).
 - **🎧 Full Audio & Video Mixed Batching**: Drop videos (`.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, etc.) and audio recordings (`.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, etc.) into the exact same batch.
-- **🪟 Native Windows Desktop App**: Run `AutoSRT.exe` directly on Windows with zero setup, zero dependencies, and instant frameless desktop interface.
+- **🪟 Native Windows Desktop App**: Run `AutoSRT.exe` directly on Windows with zero setup, zero dependencies, translation controls, and instant frameless desktop interface.
 - **🔑 Bring Your Own Key (BYOK)**: Use the shared server instance, or easily enter your own free Groq API key in the app settings for unlimited personal quota.
 - **⚡ Smart Queue & State Preservation**:
   - **Zero Duplicate Processing**: Already completed files (`ready`) are preserved and never re-uploaded or re-billed when you add new files.
@@ -51,7 +53,9 @@ flowchart TD
     C -->|Approved| D[Ephemeral Temp Dir: /tmp/autosrt-xxxx]
     D --> E[FFmpeg Native Normalizer: 16kHz Mono MP3]
     E --> F[Groq Whisper LPU Inference with Auto-Retry]
-    F --> G[Segment Synchronizer: toSrt]
+    F -->|Target Lang Selected| T[Groq LLM Fast Translation & Bilingual Stacking]
+    F -->|Original Only| G[Segment Synchronizer: toSrt]
+    T --> G
     G --> H[Live NDJSON Stream to Browser]
     H --> I[Individual .srt or subtitles.zip Auto-Download]
     D -->|Instant Cleanup| J[Guaranteed rm -rf in finally block]

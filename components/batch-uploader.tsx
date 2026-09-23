@@ -71,11 +71,31 @@ export function BatchUploader() {
   const activeControllers = useRef<Map<string, AbortController>>(new Map());
   const [customApiKey, setCustomApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [targetLang, setTargetLang] = useState("none");
+  const [bilingual, setBilingual] = useState(false);
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem("autosrt_groq_key") : null;
     if (saved) setCustomApiKey(saved);
+    const savedLang = typeof window !== "undefined" ? localStorage.getItem("autosrt_target_lang") : null;
+    if (savedLang) setTargetLang(savedLang);
+    const savedBi = typeof window !== "undefined" ? localStorage.getItem("autosrt_bilingual") : null;
+    if (savedBi === "true") setBilingual(true);
   }, []);
+
+  function handleTargetLangChange(val: string) {
+    setTargetLang(val);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("autosrt_target_lang", val);
+    }
+  }
+
+  function handleBilingualChange(val: boolean) {
+    setBilingual(val);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("autosrt_bilingual", val ? "true" : "false");
+    }
+  }
 
   function handleKeyChange(val: string) {
     setCustomApiKey(val);
@@ -229,6 +249,12 @@ export function BatchUploader() {
       const form = new FormData();
       form.append("ids", item.id);
       form.append("files", item.file, item.file.name);
+      if (targetLang && targetLang !== "none") {
+        form.append("targetLang", targetLang);
+      }
+      if (bilingual) {
+        form.append("bilingual", "true");
+      }
 
       try {
         const headers: Record<string, string> = {};
@@ -351,22 +377,56 @@ export function BatchUploader() {
         />
       </div>
 
-      {/* Optional Custom API Key Drawer */}
-      <div className="mx-4 mb-2 flex items-center justify-between text-xs">
+      {/* AI Subtitle Translation Toolbar */}
+      <div className="mx-4 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 font-medium text-slate-300">
+            <span>🌐 Translate Subtitles:</span>
+            <select
+              value={targetLang}
+              onChange={(e) => handleTargetLangChange(e.target.value)}
+              className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-200 focus:border-emerald-400 focus:outline-none"
+            >
+              <option value="none">Original (No translation)</option>
+              <option value="ar">Arabic (العربية)</option>
+              <option value="en">English</option>
+              <option value="fr">French (Français)</option>
+              <option value="es">Spanish (Español)</option>
+              <option value="de">German (Deutsch)</option>
+              <option value="tr">Turkish (Türkçe)</option>
+              <option value="it">Italian (Italiano)</option>
+              <option value="ru">Russian (Русский)</option>
+              <option value="zh">Chinese (中文)</option>
+              <option value="ja">Japanese (日本語)</option>
+              <option value="ko">Korean (한국어)</option>
+              <option value="pt">Portuguese (Português)</option>
+              <option value="id">Indonesian (Bahasa)</option>
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="ur">Urdu (اردو)</option>
+            </select>
+          </div>
+
+          {targetLang !== "none" && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-slate-400 hover:text-slate-200">
+              <input
+                type="checkbox"
+                checked={bilingual}
+                onChange={(e) => handleBilingualChange(e.target.checked)}
+                className="size-3.5 rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0"
+              />
+              <span>Bilingual Subtitles (Original + Translation)</span>
+            </label>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={() => setShowSettings(!showSettings)}
-          className="flex items-center gap-1.5 rounded-lg py-1 text-slate-400 transition hover:text-emerald-400"
+          className="flex items-center gap-1.5 text-slate-400 transition hover:text-emerald-400"
         >
           <KeyRound size={13} />
           <span>{customApiKey ? "Custom Groq Key configured" : "Bring Your Own API Key (Optional)"}</span>
         </button>
-        {customApiKey && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400">
-            <span className="size-1.5 rounded-full bg-emerald-400" />
-            Active
-          </span>
-        )}
       </div>
 
       {showSettings && (

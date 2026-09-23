@@ -290,6 +290,91 @@ function isOriginAllowed(request: Request): boolean {
   }
 }
 
+async function translateSegments(
+  groq: Groq,
+  segments: Segment[],
+  targetLang: string,
+  bilingual: boolean,
+  signal?: AbortSignal,
+  onProgress?: (message: string) => void
+): Promise<Segment[]> {
+  if (!segments.length || targetLang === "none") return segments;
+
+  const targetLangNames: Record<string, string> = {
+    ar: "Arabic",
+    en: "English",
+    fr: "French",
+    es: "Spanish",
+    de: "German",
+    tr: "Turkish",
+    it: "Italian",
+    ru: "Russian",
+    zh: "Simplified Chinese",
+    ja: "Japanese",
+    ko: "Korean",
+    pt: "Portuguese",
+    id: "Indonesian",
+    hi: "Hindi",
+    ur: "Urdu",
+  };
+
+  const targetName = targetLangNames[targetLang] || targetLang;
+  const batchSize = 35;
+  const translated = segments.map((s) => ({ ...s }));
+  const models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"];
+
+  for (let i = 0; i < segments.length; i += batchSize) {
+    if (signal?.aborted) break;
+
+    const slice = segments.slice(i, i + batchSize);
+    onProgress?.(`Translating to ${targetName} (${Math.min(i + batchSize, segments.length)}/${segments.length})…`);
+
+    const userJson = JSON.stringify({
+      segments: slice.map((s, idx) => ({ id: i + idx, text: s.text.trim() })),
+    });
+
+    const prompt = `You are a professional subtitle translator. Translate each subtitle text into ${targetName}. Output ONLY valid JSON: {"translations": [{"id": 0, "text": "..."}]}. Retain exact same IDs and natural phrasing.`;
+
+    for (const model of models) {
+      try {
+        const completion = await groq.chat.completions.create(
+          {
+            model,
+            temperature: 0.1,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: prompt },
+              { role: "user", content: userJson },
+            ],
+          },
+          { signal }
+        );
+
+        const content = completion.choices[0]?.message?.content;
+        if (content) {
+          const parsed = JSON.parse(content) as { translations?: Array<{ id: number; text: string }> };
+          if (Array.isArray(parsed.translations)) {
+            for (const item of parsed.translations) {
+              if (typeof item.id === "number" && item.text && translated[item.id]) {
+                if (bilingual) {
+                  translated[item.id].text = `${translated[item.id].text.trim()}\n${item.text.trim()}`;
+                } else {
+                  translated[item.id].text = item.text.trim();
+                }
+              }
+            }
+            break;
+          }
+        }
+      } catch (err) {
+        if (signal?.aborted) throw err;
+      }
+    }
+  }
+
+  return translated;
+}
+
 export async function POST(request: Request) {
   // 1. CSRF and Cross-Site Leeching protection
   if (!isOriginAllowed(request)) {
@@ -304,7 +389,7 @@ export async function POST(request: Request) {
 
   if (isRateLimited(clientIp)) {
     return Response.json(
-      { error: "Too many requests. Please wait a moment before processing more files." },
+      { error: "Too many requests. Please wait a moment before starting another batch." },
       {
         status: 429,
         headers: { "Retry-After": "60" },
@@ -312,15 +397,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Server or User-provided API Key validation
+  // Optional user-provided Groq API Key header (fallback to server key)
   const userApiKey = request.headers.get("x-groq-api-key")?.trim();
   const apiKey = userApiKey && userApiKey.startsWith("gsk_") ? userApiKey : process.env.GROQ_API_KEY;
 
   if (!apiKey) {
     return Response.json({ error: "GROQ_API_KEY is not configured on the server." }, { status: 500 });
-  }
-  if (!getFfmpegBinary()) {
-    return Response.json({ error: "FFmpeg is unavailable on this server." }, { status: 500 });
   }
 
   // 4. Multipart parsing with error handling
@@ -333,6 +415,8 @@ export async function POST(request: Request) {
 
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   const ids = form.getAll("ids").map(String);
+  const targetLang = form.get("targetLang")?.toString() || "none";
+  const bilingual = form.get("bilingual")?.toString() === "true";
 
   if (!files.length) return Response.json({ error: "Add at least one video or audio file." }, { status: 400 });
   if (files.length > MAX_FILES) return Response.json({ error: `A batch can contain at most ${MAX_FILES} files.` }, { status: 413 });
@@ -389,7 +473,18 @@ export async function POST(request: Request) {
           const transcript = await transcribeWithRetry(groq, audioPath, (message) => send({ type: "status", id, status: "transcribing", message }));
 
           if (request.signal.aborted) return;
-          const srt = toSrt(transcript.segments ?? []);
+          let segments = transcript.segments ?? [];
+
+          // AI Multi-Language Translation
+          if (targetLang && targetLang !== "none") {
+            send({ type: "status", id, status: "transcribing", message: "Translating subtitles with Groq AI…" });
+            segments = await translateSegments(groq, segments, targetLang, bilingual, request.signal, (msg) => {
+              send({ type: "status", id, status: "transcribing", message: msg });
+            });
+          }
+
+          if (request.signal.aborted) return;
+          const srt = toSrt(segments);
           send({ type: "result", id, filename: subtitleName(file.name), content: srt });
           send({ type: "status", id, status: "ready" });
           succeeded += 1;
