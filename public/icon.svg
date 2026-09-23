@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <!-- Background Gradients -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="50%" stop-color="#090d16"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+
+    <!-- Border Glow Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#059669" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Neon Wave Gradient -->
+    <linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="60%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+
+    <!-- Ambient Shadow -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#10b981" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base Container -->
+  <rect x="24" y="24" width="464" height="464" rx="120" fill="url(#bgGrad)"/>
+  <rect x="24" y="24" width="464" height="464" rx="120" stroke="url(#borderGrad)" stroke-width="4"/>
+
+  <!-- Center Icon: Soundwave to Subtitle Waveform -->
+  <g filter="url(#glow)">
+    <!-- Audio Wave Bars (Left) -->
+    <rect x="120" y="220" width="16" height="72" rx="8" fill="url(#waveGrad)" opacity="0.6"/>
+    <rect x="152" y="180" width="16" height="152" rx="8" fill="url(#waveGrad)" opacity="0.85"/>
+    <rect x="184" y="140" width="16" height="232" rx="8" fill="url(#waveGrad)"/>
+
+    <!-- Central Dynamic Triangle / Apex Play Node -->
+    <path d="M228 148C228 136.4 241 129.6 250.6 136.2L356.6 209.6C365.1 215.5 365.1 228.1 356.6 234L250.6 307.4C241 314 228 307.2 228 295.6V148Z" fill="url(#waveGrad)"/>
+
+    <!-- Subtitle Text Timed Bars (Bottom Right) -->
+    <rect x="228" y="340" width="164" height="16" rx="8" fill="#38bdf8"/>
+    <rect x="228" y="372" width="108" height="14" rx="7" fill="#34d399" opacity="0.8"/>
+  </g>
+</svg>
