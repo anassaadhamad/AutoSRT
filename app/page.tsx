@@ -8,9 +8,9 @@ export default function Home() {
       <div className="relative mx-auto max-w-5xl">
         <header className="mb-10 max-w-3xl">
           <div className="eyebrow"><span /> Batch transcription workspace</div>
-          <h1>Video in. Subtitles out.</h1>
+          <h1>Video & audio in. Subtitles out.</h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
-            Drop a full batch and AutoSRT will extract, transcribe, and package every subtitle with the original video name intact.
+            Drop a full batch of videos or audio recordings and AutoSRT will transcribe and package every subtitle with the original filename intact.
           </p>
         </header>
         <BatchUploader />

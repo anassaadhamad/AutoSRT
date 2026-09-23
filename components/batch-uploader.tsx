@@ -1,7 +1,7 @@
 "use client";
 
 import JSZip from "jszip";
-import { AlertCircle, Check, Download, FileVideo, LoaderCircle, UploadCloud, X } from "lucide-react";
+import { AlertCircle, Check, Download, FileAudio, FileVideo, LoaderCircle, UploadCloud, X } from "lucide-react";
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
 
 type Status = "queued" | "uploading" | "extracting" | "transcribing" | "ready" | "error";
@@ -49,6 +49,10 @@ function saveBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function isAudioFile(file: File) {
+  return file.type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|ogg|flac|wma|opus|weba)$/i.test(file.name);
+}
+
 export function BatchUploader() {
   const [items, setItems] = useState<UploadItem[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -57,14 +61,18 @@ export function BatchUploader() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function addFiles(incoming: File[]) {
-    const videos = incoming.filter((file) => file.type.startsWith("video/") || /\.(mp4|mov|mkv|avi|webm|m4v|mpeg|mpg)$/i.test(file.name));
+    const mediaFiles = incoming.filter((file) =>
+      file.type.startsWith("video/") ||
+      file.type.startsWith("audio/") ||
+      /\.(mp4|mov|mkv|avi|webm|m4v|mpeg|mpg|wmv|flv|3gp|mp3|wav|m4a|aac|ogg|flac|wma|opus|weba)$/i.test(file.name)
+    );
     setItems((current) => {
       const known = new Set(current.map(({ file }) => `${file.name}:${file.size}:${file.lastModified}`));
-      return [...current, ...videos.filter((file) => !known.has(`${file.name}:${file.size}:${file.lastModified}`)).map((file) => ({
+      return [...current, ...mediaFiles.filter((file) => !known.has(`${file.name}:${file.size}:${file.lastModified}`)).map((file) => ({
         id: crypto.randomUUID(), file, status: "queued" as const,
       }))];
     });
-    if (videos.length !== incoming.length) setNotice("Some files were skipped because they do not appear to be videos.");
+    if (mediaFiles.length !== incoming.length) setNotice("Some files were skipped because they do not appear to be video or audio files.");
     else setNotice(undefined);
   }
 
@@ -93,7 +101,7 @@ export function BatchUploader() {
       seen.add(stem);
     }
     if (duplicateStems.size) {
-      setNotice("Two selected videos would produce the same .srt name. Rename or remove one of them first.");
+      setNotice("Two selected files would produce the same .srt name. Rename or remove one of them first.");
       return;
     }
 
@@ -170,9 +178,9 @@ export function BatchUploader() {
         <div className="mb-5 grid size-14 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-300 shadow-[0_0_35px_rgba(52,211,153,.08)]">
           <UploadCloud size={25} strokeWidth={1.7} />
         </div>
-        <p className="text-lg font-semibold tracking-tight text-slate-100">Drop your video batch here</p>
-        <p className="mt-2 text-sm text-slate-500">or click to browse · MP4, MOV, MKV, AVI, WebM and more</p>
-        <input ref={inputRef} type="file" accept="video/*,.mkv,.avi,.m4v" multiple onChange={onInput} className="hidden" />
+        <p className="text-lg font-semibold tracking-tight text-slate-100">Drop your video or audio batch here</p>
+        <p className="mt-2 text-sm text-slate-500">or click to browse · MP4, MP3, WAV, MOV, M4A, MKV, AAC, WebM and more</p>
+        <input ref={inputRef} type="file" accept="video/*,audio/*,.mkv,.avi,.m4v,.mp4,.mov,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.opus" multiple onChange={onInput} className="hidden" />
       </div>
 
       {items.length > 0 && (
@@ -191,7 +199,9 @@ export function BatchUploader() {
               return (
                 <div key={item.id} className="group px-5 py-4 sm:px-7">
                   <div className="flex items-start gap-4">
-                    <div className="mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl bg-slate-800/70 text-slate-400"><FileVideo size={18} /></div>
+                    <div className="mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl bg-slate-800/70 text-slate-400">
+                      {isAudioFile(item.file) ? <FileAudio size={18} /> : <FileVideo size={18} />}
+                    </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">

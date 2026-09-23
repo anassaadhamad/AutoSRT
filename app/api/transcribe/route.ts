@@ -10,7 +10,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpeg", ".mpg", ".wmv"]);
+const MEDIA_EXTENSIONS = new Set([
+  // Video
+  ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpeg", ".mpg", ".wmv", ".flv", ".3gp",
+  // Audio
+  ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".wma", ".opus", ".weba",
+]);
 const MAX_FILES = positiveInt(process.env.MAX_BATCH_FILES, 10, 1, 50);
 const MAX_FILE_BYTES = positiveInt(process.env.MAX_FILE_SIZE_MB, 500, 1, 5_000) * 1024 * 1024;
 const CONCURRENCY = positiveInt(process.env.TRANSCRIPTION_CONCURRENCY, 2, 1, 5);
@@ -28,8 +33,8 @@ function positiveInt(value: string | undefined, fallback: number, min: number, m
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 }
 
-function subtitleName(videoName: string) {
-  const base = path.parse(path.basename(videoName)).name.trim();
+function subtitleName(mediaName: string) {
+  const base = path.parse(path.basename(mediaName)).name.trim();
   return `${base || "subtitles"}.srt`;
 }
 
@@ -154,15 +159,15 @@ export async function POST(request: Request) {
   }
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   const ids = form.getAll("ids").map(String);
-  if (!files.length) return Response.json({ error: "Add at least one video file." }, { status: 400 });
+  if (!files.length) return Response.json({ error: "Add at least one video or audio file." }, { status: 400 });
   if (files.length > MAX_FILES) return Response.json({ error: `A batch can contain at most ${MAX_FILES} files.` }, { status: 413 });
-  if (files.some((file) => file.size > MAX_FILE_BYTES)) return Response.json({ error: `Each video must be no larger than ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 413 });
-  if (files.some((file) => !file.type.startsWith("video/") && !VIDEO_EXTENSIONS.has(path.extname(file.name).toLowerCase()))) {
-    return Response.json({ error: "The batch contains an unsupported file type." }, { status: 415 });
+  if (files.some((file) => file.size > MAX_FILE_BYTES)) return Response.json({ error: `Each file must be no larger than ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 413 });
+  if (files.some((file) => !file.type.startsWith("video/") && !file.type.startsWith("audio/") && !MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase()))) {
+    return Response.json({ error: "The batch contains an unsupported file type. Please upload video or audio files." }, { status: 415 });
   }
   const outputNames = files.map((file) => subtitleName(file.name).toLocaleLowerCase());
   if (new Set(outputNames).size !== outputNames.length) {
-    return Response.json({ error: "Two videos would produce the same subtitle filename. Rename one before uploading." }, { status: 400 });
+    return Response.json({ error: "Two files would produce the same subtitle filename. Rename one before uploading." }, { status: 400 });
   }
 
   const batch: BatchFile[] = files.map((file, index) => ({ id: ids[index] || crypto.randomUUID(), file }));
@@ -176,7 +181,8 @@ export async function POST(request: Request) {
 
       void mapConcurrent(batch, CONCURRENCY, async ({ id, file }) => {
         const workDir = await mkdtemp(path.join(tmpdir(), "autosrt-"));
-        const inputPath = path.join(workDir, `input${path.extname(file.name).toLowerCase().slice(0, 12) || ".video"}`);
+        const ext = path.extname(file.name).toLowerCase().slice(0, 12) || (file.type.startsWith("audio/") ? ".audio" : ".video");
+        const inputPath = path.join(workDir, `input${ext}`);
         const audioPath = path.join(workDir, "audio.mp3");
         try {
           send({ type: "status", id, status: "extracting" });
