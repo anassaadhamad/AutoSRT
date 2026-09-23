@@ -4,6 +4,7 @@
 
 ### High-Performance Batch Video & Audio to Subtitles (`.srt`) Powered by Groq Whisper & FFmpeg
 
+[![Live Demo](https://img.shields.io/badge/Live_Demo-autosrt.anas.lol-00C781?style=for-the-badge&logo=google-chrome&logoColor=white)](https://autosrt.anas.lol)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Groq Whisper](https://img.shields.io/badge/Groq-Whisper_v3_Turbo-orange?style=for-the-badge&logo=groq)](https://groq.com/)
@@ -17,7 +18,7 @@
   Zero setup headaches, zero data retention, fully dockerized, and enterprise-hardened.
 </p>
 
-[Quick Start](#-quick-start) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [Security](#-enterprise-grade-security) • [Environment Variables](#-configuration)
+[🌐 **Live Demo**](https://autosrt.anas.lol) • [Quick Start](#-quick-start) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [Security](#-enterprise-grade-security) • [Environment Variables](#-configuration)
 
 </div>
 

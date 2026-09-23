@@ -280,6 +280,8 @@ function isOriginAllowed(request: Request): boolean {
     const originWithoutPort = originUrl.hostname;
     return (
       originWithoutPort === hostWithoutPort ||
+      originWithoutPort === "autosrt.anas.lol" ||
+      originWithoutPort.endsWith(".anas.lol") ||
       originWithoutPort === "localhost" ||
       originWithoutPort === "127.0.0.1"
     );
