@@ -250,7 +250,9 @@ namespace AutoSRTDesktop
 
             // Optimized speech compression: 16kHz mono, ~48-64kbps MP3
             // Dramatic size reduction (e.g. 1 hour video -> ~20 MB audio), ideal for Whisper
-            string args = string.Format("-y -nostdin -protocol_whitelist \"file,crypto,data\" -i \"{0}\" -vn -acodec libmp3lame -q:a 5 -ac 1 -ar 16000 \"{1}\"", inputPath, outputMp3);
+            string args = string.Format("-y -nostdin -hide_banner -loglevel warning -protocol_whitelist \"file,crypto,data\" -i \"{0}\" -vn -acodec libmp3lame -q:a 5 -ac 1 -ar 16000 \"{1}\"", inputPath, outputMp3);
+
+            StringBuilder stderrBuilder = new StringBuilder();
 
             ProcessStartInfo psi = new ProcessStartInfo
             {
@@ -258,14 +260,30 @@ namespace AutoSRTDesktop
                 Arguments = args,
                 UseShellExecute = false,
                 RedirectStandardError = true,
-                RedirectStandardOutput = true,
+                RedirectStandardOutput = false,
                 CreateNoWindow = true
             };
 
             Process process = new Process { StartInfo = psi };
+            process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
+            {
+                if (e.Data != null)
+                {
+                    lock (stderrBuilder)
+                    {
+                        stderrBuilder.AppendLine(e.Data);
+                    }
+                    if (logCallback != null)
+                    {
+                        try { logCallback(e.Data); } catch { }
+                    }
+                }
+            };
+
             try
             {
                 process.Start();
+                process.BeginErrorReadLine(); // Asynchronously drain stderr continuously to prevent pipe buffer deadlock!
 
                 var tcs = new TaskCompletionSource<bool>();
                 ThreadPool.QueueUserWorkItem(delegate
@@ -292,12 +310,13 @@ namespace AutoSRTDesktop
 
                 if (process.ExitCode != 0)
                 {
-                    string error = process.StandardError.ReadToEnd();
+                    string error;
+                    lock (stderrBuilder) { error = stderrBuilder.ToString(); }
                     if (error.Contains("matches no streams") || error.Contains("does not contain any stream"))
                     {
                         throw new Exception(I18n.T("The media file has no audio stream to transcribe.", "الملف لا يحتوي على أي مسار صوتي (Audio track) لتفريغه."));
                     }
-                    throw new Exception(I18n.T("FFmpeg audio extraction failed: exit code " + process.ExitCode, "فشل استخراج الصوت عبر FFmpeg: كود الخطأ " + process.ExitCode));
+                    throw new Exception(I18n.T("FFmpeg audio extraction failed: exit code " + process.ExitCode + " - " + error.Trim(), "فشل استخراج الصوت عبر FFmpeg: كود الخطأ " + process.ExitCode + " - " + error.Trim()));
                 }
 
                 if (!File.Exists(outputMp3) || new FileInfo(outputMp3).Length == 0)
