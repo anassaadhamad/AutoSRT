@@ -13,6 +13,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Web.Script.Serialization;
 
 namespace AutoSRTDesktop
 {
@@ -364,7 +365,7 @@ namespace AutoSRTDesktop
             using (var form = new MultipartFormDataContent())
             {
                 form.Add(new StringContent(string.IsNullOrEmpty(model) ? "whisper-large-v3-turbo" : model), "model");
-                form.Add(new StringContent("srt"), "response_format");
+                form.Add(new StringContent("verbose_json"), "response_format");
                 form.Add(new StringContent("0"), "temperature");
 
                 if (!string.IsNullOrEmpty(language) && language != "auto")
@@ -388,12 +389,8 @@ namespace AutoSRTDesktop
                     {
                         if (response.IsSuccessStatusCode)
                         {
-                            string srtContent = await response.Content.ReadAsStringAsync();
-                            if (string.IsNullOrWhiteSpace(srtContent))
-                            {
-                                throw new Exception(I18n.T("No subtitle text returned from AI (file may be silent).", "لم يتم استلام أي نص ترجمة من الذكاء الاصطناعي (الملف قد يكون صامتًا)."));
-                            }
-                            return srtContent;
+                            string jsonContent = await response.Content.ReadAsStringAsync();
+                            return ConvertVerboseJsonToSrt(jsonContent);
                         }
 
                         string errBody = await response.Content.ReadAsStringAsync();
@@ -414,6 +411,60 @@ namespace AutoSRTDesktop
             }
         }
 
+        private static string ConvertVerboseJsonToSrt(string json)
+        {
+            var jss = new JavaScriptSerializer();
+            jss.MaxJsonLength = int.MaxValue;
+            var result = jss.Deserialize<GroqTranscriptionResult>(json);
+
+            if (result == null || result.segments == null || result.segments.Count == 0)
+            {
+                if (result != null && !string.IsNullOrWhiteSpace(result.text))
+                {
+                    return "1\r\n00:00:00,000 --> 00:00:10,000\r\n" + result.text.Trim() + "\r\n";
+                }
+                throw new Exception(I18n.T(
+                    "The transcription returned no speech segments (audio might be silent or music only).",
+                    "لم يتم العثور على أي كلام منطوق في الملف (قد يكون الملف صامتاً أو يحتوي موسيقى فقط)."
+                ));
+            }
+
+            StringBuilder sb = new StringBuilder();
+            int index = 1;
+            for (int i = 0; i < result.segments.Count; i++)
+            {
+                var seg = result.segments[i];
+                if (seg == null || string.IsNullOrWhiteSpace(seg.text)) continue;
+
+                double start = Math.Max(0, seg.start);
+                double end = Math.Max(seg.end, start + 0.001);
+
+                sb.AppendLine(index.ToString());
+                sb.AppendLine(FormatSrtTime(start) + " --> " + FormatSrtTime(end));
+                sb.AppendLine(seg.text.Trim());
+                sb.AppendLine();
+                index++;
+            }
+
+            if (index == 1)
+            {
+                throw new Exception(I18n.T("No speech segments found in file.", "لم يتم العثور على أي كلام منطوق لتفريغه."));
+            }
+
+            return sb.ToString();
+        }
+
+        private static string FormatSrtTime(double seconds)
+        {
+            long totalMillis = (long)Math.Round(seconds * 1000.0);
+            if (totalMillis < 0) totalMillis = 0;
+            long hours = totalMillis / 3600000;
+            long minutes = (totalMillis % 3600000) / 60000;
+            long secs = (totalMillis % 60000) / 1000;
+            long millis = totalMillis % 1000;
+            return string.Format("{0:00}:{1:00}:{2:00},{3:000}", hours, minutes, secs, millis);
+        }
+
         private static string GetMimeType(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
@@ -431,6 +482,19 @@ namespace AutoSRTDesktop
                 default: return "application/octet-stream";
             }
         }
+    }
+
+    public class GroqSegment
+    {
+        public double start { get; set; }
+        public double end { get; set; }
+        public string text { get; set; }
+    }
+
+    public class GroqTranscriptionResult
+    {
+        public string text { get; set; }
+        public List<GroqSegment> segments { get; set; }
     }
     #endregion
 
