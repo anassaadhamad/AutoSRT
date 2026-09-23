@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Web.Script.Serialization;
+using System.Text.RegularExpressions;
 
 namespace AutoSRTDesktop
 {
@@ -448,12 +449,37 @@ namespace AutoSRTDesktop
             }
         }
 
-        private static readonly string[] TranslationModels = new string[]
+        private static int ParseRetryAfterSeconds(HttpResponseMessage resp, string body)
         {
-            "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
-            "qwen/qwen3.8-27b"
-        };
+            try
+            {
+                if (resp.Headers.RetryAfter != null && resp.Headers.RetryAfter.Delta.HasValue)
+                {
+                    int sec = (int)Math.Ceiling(resp.Headers.RetryAfter.Delta.Value.TotalSeconds);
+                    if (sec > 0) return Math.Min(60, sec);
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (!string.IsNullOrEmpty(body))
+                {
+                    var m = Regex.Match(body, @"try again in ([0-9]+(\.[0-9]+)?)s", RegexOptions.IgnoreCase);
+                    if (m.Success)
+                    {
+                        double d;
+                        if (double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out d))
+                        {
+                            return Math.Min(60, (int)Math.Ceiling(d));
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return 20; // Default safe backoff
+        }
 
         public static async Task TranslateSegmentsAsync(
             string apiKey,
@@ -466,9 +492,19 @@ namespace AutoSRTDesktop
             if (segments == null || segments.Count == 0) return;
 
             string targetName = GetTargetLanguageEnglishName(targetLanguage);
-            int batchSize = 35;
+            int batchSize = 15; // 15 segments to prevent exceeding 1000 output tokens per minute
             var jss = new JavaScriptSerializer();
             jss.MaxJsonLength = int.MaxValue;
+
+            List<string> models = new List<string>();
+            if (string.Equals(targetLanguage, "ar", StringComparison.OrdinalIgnoreCase))
+            {
+                // allam-2-7b is SDAIA's ultra-fast Arabic model (18ms, 0 reasoning token waste)
+                models.Add("allam-2-7b");
+            }
+            models.Add("openai/gpt-oss-120b");
+            models.Add("openai/gpt-oss-20b");
+            models.Add("qwen/qwen3.8-27b");
 
             for (int i = 0; i < segments.Count; i += batchSize)
             {
@@ -494,96 +530,147 @@ namespace AutoSRTDesktop
 
                 bool success = false;
                 Exception lastEx = null;
+                int maxRetries = 4;
 
-                foreach (string tModel in TranslationModels)
+                for (int attempt = 0; attempt < maxRetries && !success; attempt++)
                 {
-                    try
+                    ct.ThrowIfCancellationRequested();
+
+                    foreach (string tModel in models)
                     {
-                        var reqBody = new
+                        try
                         {
-                            model = tModel,
-                            temperature = 0.1,
-                            response_format = new { type = "json_object" },
-                            messages = new object[]
+                            object reqBody;
+                            if (tModel.StartsWith("openai/"))
                             {
-                                new { role = "system", content = prompt },
-                                new { role = "user", content = userJson }
-                            }
-                        };
-
-                        string jsonPayload = jss.Serialize(reqBody);
-                        using (var req = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/chat/completions"))
-                        {
-                            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
-                            req.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-                            using (var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct))
-                            {
-                                if (resp.IsSuccessStatusCode)
+                                reqBody = new
                                 {
-                                    string respBody = await resp.Content.ReadAsStringAsync();
-                                    var chatResp = jss.Deserialize<GroqChatResponse>(respBody);
-                                    if (chatResp != null && chatResp.choices != null && chatResp.choices.Count > 0)
+                                    model = tModel,
+                                    temperature = 0.1,
+                                    reasoning_effort = "low",
+                                    max_completion_tokens = 500,
+                                    response_format = new { type = "json_object" },
+                                    messages = new object[]
                                     {
-                                        string content = chatResp.choices[0].message != null ? chatResp.choices[0].message.content : null;
-                                        if (!string.IsNullOrEmpty(content))
-                                        {
-                                            content = content.Trim();
-                                            if (content.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
-                                                content = content.Substring(7);
-                                            else if (content.StartsWith("```"))
-                                                content = content.Substring(3);
-                                            if (content.EndsWith("```"))
-                                                content = content.Substring(0, content.Length - 3);
-                                            content = content.Trim();
+                                        new { role = "system", content = prompt },
+                                        new { role = "user", content = userJson }
+                                    }
+                                };
+                            }
+                            else
+                            {
+                                reqBody = new
+                                {
+                                    model = tModel,
+                                    temperature = 0.1,
+                                    max_completion_tokens = 500,
+                                    response_format = new { type = "json_object" },
+                                    messages = new object[]
+                                    {
+                                        new { role = "system", content = prompt },
+                                        new { role = "user", content = userJson }
+                                    }
+                                };
+                            }
 
-                                            var transObj = jss.Deserialize<SubtitleTranslationContainer>(content);
-                                            if (transObj != null && transObj.translations != null)
+                            string jsonPayload = jss.Serialize(reqBody);
+                            using (var req = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/chat/completions"))
+                            {
+                                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
+                                req.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                                using (var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct))
+                                {
+                                    if (resp.IsSuccessStatusCode)
+                                    {
+                                        string respBody = await resp.Content.ReadAsStringAsync();
+                                        var chatResp = jss.Deserialize<GroqChatResponse>(respBody);
+                                        if (chatResp != null && chatResp.choices != null && chatResp.choices.Count > 0)
+                                        {
+                                            string content = chatResp.choices[0].message != null ? chatResp.choices[0].message.content : null;
+                                            if (!string.IsNullOrEmpty(content))
                                             {
-                                                foreach (var item in transObj.translations)
+                                                content = content.Trim();
+                                                if (content.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+                                                    content = content.Substring(7);
+                                                else if (content.StartsWith("```"))
+                                                    content = content.Substring(3);
+                                                if (content.EndsWith("```"))
+                                                    content = content.Substring(0, content.Length - 3);
+                                                content = content.Trim();
+
+                                                var transObj = jss.Deserialize<SubtitleTranslationContainer>(content);
+                                                if (transObj != null && transObj.translations != null)
                                                 {
-                                                    if (item != null && item.id >= 0 && item.id < segments.Count && !string.IsNullOrWhiteSpace(item.text))
+                                                    foreach (var item in transObj.translations)
                                                     {
-                                                        if (bilingual)
+                                                        if (item != null && item.id >= 0 && item.id < segments.Count && !string.IsNullOrWhiteSpace(item.text))
                                                         {
-                                                            segments[item.id].text = segments[item.id].text.Trim() + "\r\n" + item.text.Trim();
-                                                        }
-                                                        else
-                                                        {
-                                                            segments[item.id].text = item.text.Trim();
+                                                            if (bilingual)
+                                                            {
+                                                                segments[item.id].text = segments[item.id].text.Trim() + "\r\n" + item.text.Trim();
+                                                            }
+                                                            else
+                                                            {
+                                                                segments[item.id].text = item.text.Trim();
+                                                            }
                                                         }
                                                     }
+                                                    success = true;
+                                                    break;
                                                 }
-                                                success = true;
-                                                break;
                                             }
                                         }
                                     }
-                                }
-                                else if (resp.StatusCode == HttpStatusCode.Unauthorized)
-                                {
-                                    throw new Exception(I18n.T("Invalid Groq API Key for translation.", "مفتاح Groq غير صالح للترجمة."));
-                                }
-                                else
-                                {
-                                    string errBody = await resp.Content.ReadAsStringAsync();
-                                    lastEx = new Exception(string.Format("Groq API error ({0}): {1}", (int)resp.StatusCode, errBody));
+                                    else if ((int)resp.StatusCode == 429)
+                                    {
+                                        string errBody = await resp.Content.ReadAsStringAsync();
+                                        int waitSeconds = ParseRetryAfterSeconds(resp, errBody);
+                                        lastEx = new Exception(string.Format("Groq Rate Limit (429): {0}", errBody));
+
+                                        // Countdown wait before retrying
+                                        for (int w = waitSeconds; w > 0; w--)
+                                        {
+                                            ct.ThrowIfCancellationRequested();
+                                            statusCallback(string.Format(
+                                                I18n.T("⏳ Rate limit reached. Auto-resuming in {0}s...", "⏳ تم الوصول لحد الطلبات. جاري الاستئناف تلقائياً خلال {0} ثانية..."),
+                                                w
+                                            ));
+                                            await Task.Delay(1000, ct);
+                                        }
+                                        break; // Break inner model loop to retry attempt with cool-off
+                                    }
+                                    else if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                                    {
+                                        throw new Exception(I18n.T("Invalid Groq API Key for translation.", "مفتاح Groq غير صالح للترجمة."));
+                                    }
+                                    else
+                                    {
+                                        string errBody = await resp.Content.ReadAsStringAsync();
+                                        lastEx = new Exception(string.Format("Groq API error ({0}): {1}", (int)resp.StatusCode, errBody));
+                                    }
                                 }
                             }
                         }
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        lastEx = ex;
-                    }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            lastEx = ex;
+                        }
 
-                    if (success) break;
+                        if (success) break;
+                    }
                 }
 
                 if (!success && lastEx != null)
                 {
                     throw new Exception(I18n.T("Failed to translate subtitle segment: ", "فشلت ترجمة مقطع من الترجمة: ") + lastEx.Message);
+                }
+
+                // Short 500ms pacing pause between batches to protect token bucket
+                if (i + batchSize < segments.Count)
+                {
+                    await Task.Delay(500, ct);
                 }
             }
         }

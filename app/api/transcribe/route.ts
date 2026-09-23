@@ -319,9 +319,12 @@ async function translateSegments(
   };
 
   const targetName = targetLangNames[targetLang] || targetLang;
-  const batchSize = 35;
+  const batchSize = 15;
   const translated = segments.map((s) => ({ ...s }));
-  const models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"];
+  const models =
+    targetLang === "ar"
+      ? ["allam-2-7b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+      : ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"];
 
   for (let i = 0; i < segments.length; i += batchSize) {
     if (signal?.aborted) break;
@@ -337,21 +340,30 @@ async function translateSegments(
 
     for (const model of models) {
       try {
+        const isOss = model.startsWith("openai/");
         const completion = await groq.chat.completions.create(
           {
             model,
             temperature: 0.1,
+            max_completion_tokens: 500,
+            ...(isOss ? { reasoning_effort: "low" as const } : {}),
             response_format: { type: "json_object" },
             messages: [
-              { role: "system", content: prompt },
-              { role: "user", content: userJson },
+              { role: "system", content: prompt } as any,
+              { role: "user", content: userJson } as any,
             ],
-          },
+          } as any,
           { signal }
         );
 
-        const content = completion.choices[0]?.message?.content;
+        let content = completion.choices[0]?.message?.content;
         if (content) {
+          content = content.trim();
+          if (content.startsWith("```json")) content = content.slice(7);
+          else if (content.startsWith("```")) content = content.slice(3);
+          if (content.endsWith("```")) content = content.slice(0, -3);
+          content = content.trim();
+
           const parsed = JSON.parse(content) as { translations?: Array<{ id: number; text: string }> };
           if (Array.isArray(parsed.translations)) {
             for (const item of parsed.translations) {
@@ -366,9 +378,17 @@ async function translateSegments(
             break;
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         if (signal?.aborted) throw err;
+        if (err?.status === 429) {
+          // Pause and let rate limit cool down before next retry
+          await new Promise((r) => setTimeout(r, 15000));
+        }
       }
+    }
+
+    if (i + batchSize < segments.length) {
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 
