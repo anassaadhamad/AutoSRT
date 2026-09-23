@@ -21,6 +21,33 @@ const MAX_FILE_BYTES = positiveInt(process.env.MAX_FILE_SIZE_MB, 500, 1, 5_000) 
 const CONCURRENCY = positiveInt(process.env.TRANSCRIPTION_CONCURRENCY, 2, 1, 5);
 const MAX_RETRIES = 3;
 
+// Rate limiting configuration
+type RateLimitRecord = { count: number; resetTime: number };
+const rateLimitMap = new Map<string, RateLimitRecord>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = positiveInt(process.env.RATE_LIMIT_PER_MINUTE, 30, 5, 120);
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const record = rateLimitMap.get(ip);
+  if (!record || now > record.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  record.count += 1;
+  return record.count > MAX_REQUESTS_PER_WINDOW;
+}
+
+// Clean up stale rate limit entries every 5 minutes
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of rateLimitMap.entries()) {
+      if (now > record.resetTime) rateLimitMap.delete(ip);
+    }
+  }, 5 * 60 * 1000).unref?.();
+}
+
 type Segment = { start: number; end: number; text: string };
 type BatchFile = { id: string; file: File };
 type StreamEvent =
@@ -33,9 +60,15 @@ function positiveInt(value: string | undefined, fallback: number, min: number, m
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 }
 
-function subtitleName(mediaName: string) {
-  const base = path.parse(path.basename(mediaName)).name.trim();
-  return `${base || "subtitles"}.srt`;
+function sanitizeFilename(name: string): string {
+  const base = path.basename(name).replace(/[\0\x00-\x1f\x7f\\/:]/g, "");
+  const parsed = path.parse(base).name.trim();
+  const sanitized = parsed.replace(/[^\p{L}\p{N}\s._-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 100);
+  return sanitized || "media";
+}
+
+function subtitleName(mediaName: string): string {
+  return `${sanitizeFilename(mediaName)}.srt`;
 }
 
 function srtTimestamp(seconds: number) {
@@ -63,17 +96,77 @@ function getFfmpegBinary(): string | undefined {
   return "ffmpeg";
 }
 
+function isValidMediaHeader(buffer: Buffer): boolean {
+  if (buffer.length < 12) return false;
+
+  // 1. MP4 / M4A / MOV (contains "ftyp", "moov", "mdat", "free" within first 32 bytes)
+  const asciiHeader = buffer.subarray(0, 32).toString("ascii");
+  if (
+    asciiHeader.includes("ftyp") ||
+    asciiHeader.includes("moov") ||
+    asciiHeader.includes("mdat") ||
+    asciiHeader.includes("free")
+  ) return true;
+
+  // 2. Matroska / WebM (0x1A 0x45 0xDF 0xA3)
+  if (buffer[0] === 0x1A && buffer[1] === 0x45 && buffer[2] === 0xDF && buffer[3] === 0xA3) return true;
+
+  // 3. RIFF (WAV, AVI)
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+    const riffType = buffer.subarray(8, 12).toString("ascii");
+    if (riffType === "WAVE" || riffType === "AVI ") return true;
+  }
+
+  // 4. MP3 with ID3v2 tag ('ID3')
+  if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return true;
+
+  // 5. Raw MP3 sync frame (0xFF 0xFB, 0xFF 0xF3, etc.)
+  if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return true;
+
+  // 6. Ogg / Opus / Vorbis ('OggS')
+  if (buffer[0] === 0x4F && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) return true;
+
+  // 7. FLAC ('fLaC')
+  if (buffer[0] === 0x66 && buffer[1] === 0x4C && buffer[2] === 0x61 && buffer[3] === 0x43) return true;
+
+  // 8. ASF / WMV / WMA (0x30 0x26 0xB2 0x75)
+  if (buffer[0] === 0x30 && buffer[1] === 0x26 && buffer[2] === 0xB2 && buffer[3] === 0x75) return true;
+
+  // 9. FLV ('FLV')
+  if (buffer[0] === 0x46 && buffer[1] === 0x4C && buffer[2] === 0x56) return true;
+
+  // 10. AAC ADTS (0xFF 0xF1 or 0xFF 0xF9)
+  if (buffer[0] === 0xFF && (buffer[1] === 0xF1 || buffer[1] === 0xF9)) return true;
+
+  return false;
+}
+
 function runFfmpeg(input: string, output: string, signal?: AbortSignal) {
   const binary = getFfmpegBinary();
   if (!binary) throw new Error("The FFmpeg binary is unavailable on this platform.");
   if (signal?.aborted) return Promise.reject(new Error("Operation cancelled by user."));
 
   return new Promise<void>((resolve, reject) => {
+    // Security flags:
+    // -nostdin: prevents reading terminal input
+    // -protocol_whitelist "file,crypto,data": strictly prevents SSRF and network access inside media
     const child = spawn(/*turbopackIgnore: true*/ binary, [
-      "-hide_banner", "-loglevel", "error", "-y", "-i", input,
-      "-vn", "-ac", "1", "-ar", "16000",
-      "-c:a", "libmp3lame", "-b:a", "48k", output,
-    ], { windowsHide: true });
+      "-nostdin",
+      "-protocol_whitelist", "file,crypto,data",
+      "-hide_banner",
+      "-loglevel", "error",
+      "-y",
+      "-i", input,
+      "-vn",
+      "-ac", "1",
+      "-ar", "16000",
+      "-c:a", "libmp3lame",
+      "-b:a", "48k",
+      output,
+    ], {
+      windowsHide: true,
+      timeout: 240_000, // 4-minute hard limit to prevent endless hanging
+    });
 
     if (signal) {
       const onAbort = () => {
@@ -96,7 +189,7 @@ function runFfmpeg(input: string, output: string, signal?: AbortSignal) {
         err.includes("matches no streams") ||
         err.includes("no audio stream")
       ) {
-        return reject(new Error("الفيديو لا يحتوي على أي مسار صوتي (Audio track) لتفريغه."));
+        return reject(new Error("الملف لا يحتوي على أي مسار صوتي (Audio track) لتفريغه."));
       }
       return reject(new Error(err || `FFmpeg exited with code ${code}.`));
     });
@@ -141,12 +234,22 @@ async function transcribeWithRetry(groq: Groq, audioPath: string, onRetry: (mess
   }
 }
 
-function readableError(error: unknown) {
+function readableError(error: unknown): string {
+  let message = "Unexpected processing failure.";
   if (typeof error === "object" && error && "error" in error) {
     const nested = error.error;
-    if (typeof nested === "object" && nested && "message" in nested && typeof nested.message === "string") return nested.message;
+    if (typeof nested === "object" && nested && "message" in nested && typeof nested.message === "string") {
+      message = nested.message;
+    }
+  } else if (error instanceof Error) {
+    message = error.message;
   }
-  return error instanceof Error ? error.message : "Unexpected processing failure.";
+
+  // Mask sensitive server internals and paths
+  return message
+    .replace(/[A-Za-z]:\\[^\s]+/g, "[internal path]")
+    .replace(/\/(?:[a-zA-Z0-9._-]+\/)+[a-zA-Z0-9._-]+/g, "[internal path]")
+    .replace(/gsk_[a-zA-Z0-9_-]+/g, "[redacted]");
 }
 
 async function mapConcurrent<T>(values: T[], limit: number, worker: (value: T) => Promise<void>) {
@@ -160,24 +263,86 @@ async function mapConcurrent<T>(values: T[], limit: number, worker: (value: T) =
   await Promise.all(Array.from({ length: Math.min(limit, values.length) }, run));
 }
 
-export async function POST(request: Request) {
-  if (!process.env.GROQ_API_KEY) return Response.json({ error: "GROQ_API_KEY is not configured on the server." }, { status: 500 });
-  if (!getFfmpegBinary()) return Response.json({ error: "FFmpeg is unavailable on this server." }, { status: 500 });
+function isOriginAllowed(request: Request): boolean {
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite === "cross-site") {
+    return false;
+  }
 
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("host") || request.headers.get("x-forwarded-host");
+
+  if (!origin || !host) return true;
+
+  try {
+    const originUrl = new URL(origin);
+    const hostWithoutPort = host.split(":")[0];
+    const originWithoutPort = originUrl.hostname;
+    return (
+      originWithoutPort === hostWithoutPort ||
+      originWithoutPort === "localhost" ||
+      originWithoutPort === "127.0.0.1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function POST(request: Request) {
+  // 1. CSRF and Cross-Site Leeching protection
+  if (!isOriginAllowed(request)) {
+    return Response.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
+
+  // 2. Rate Limiting Protection (DoS / API draining prevention)
+  const clientIp =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "127.0.0.1";
+
+  if (isRateLimited(clientIp)) {
+    return Response.json(
+      { error: "Too many requests. Please wait a moment before processing more files." },
+      {
+        status: 429,
+        headers: { "Retry-After": "60" },
+      }
+    );
+  }
+
+  // 3. Server configuration validation
+  if (!process.env.GROQ_API_KEY) {
+    return Response.json({ error: "GROQ_API_KEY is not configured on the server." }, { status: 500 });
+  }
+  if (!getFfmpegBinary()) {
+    return Response.json({ error: "FFmpeg is unavailable on this server." }, { status: 500 });
+  }
+
+  // 4. Multipart parsing with error handling
   let form: FormData;
   try {
     form = await request.formData();
   } catch {
     return Response.json({ error: "Could not read the multipart upload." }, { status: 400 });
   }
+
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   const ids = form.getAll("ids").map(String);
+
   if (!files.length) return Response.json({ error: "Add at least one video or audio file." }, { status: 400 });
   if (files.length > MAX_FILES) return Response.json({ error: `A batch can contain at most ${MAX_FILES} files.` }, { status: 413 });
-  if (files.some((file) => file.size > MAX_FILE_BYTES)) return Response.json({ error: `Each file must be no larger than ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 413 });
-  if (files.some((file) => !file.type.startsWith("video/") && !file.type.startsWith("audio/") && !MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase()))) {
-    return Response.json({ error: "The batch contains an unsupported file type. Please upload video or audio files." }, { status: 415 });
+  if (files.some((file) => file.size > MAX_FILE_BYTES)) {
+    return Response.json({ error: `Each file must be no larger than ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB.` }, { status: 413 });
   }
+
+  // Extension validation
+  if (files.some((file) => {
+    const ext = path.extname(file.name).toLowerCase();
+    return !MEDIA_EXTENSIONS.has(ext);
+  })) {
+    return Response.json({ error: "The batch contains an unsupported file type. Please upload valid video or audio files." }, { status: 415 });
+  }
+
   const outputNames = files.map((file) => subtitleName(file.name).toLocaleLowerCase());
   if (new Set(outputNames).size !== outputNames.length) {
     return Response.json({ error: "Two files would produce the same subtitle filename. Rename one before uploading." }, { status: 400 });
@@ -197,15 +362,27 @@ export async function POST(request: Request) {
         const ext = path.extname(file.name).toLowerCase().slice(0, 12) || (file.type.startsWith("audio/") ? ".audio" : ".video");
         const inputPath = path.join(workDir, `input${ext}`);
         const audioPath = path.join(workDir, "audio.mp3");
+
         try {
           if (request.signal.aborted) return;
           send({ type: "status", id, status: "extracting" });
-          await writeFile(inputPath, Buffer.from(await file.arrayBuffer()));
+
+          const buffer = Buffer.from(await file.arrayBuffer());
+
+          // Magic Bytes verification: verify it's an actual media container, not a malicious disguised payload
+          if (!isValidMediaHeader(buffer)) {
+            throw new Error("Invalid file content: The file does not appear to be a valid audio or video container.");
+          }
+
+          await writeFile(inputPath, buffer);
+
           if (request.signal.aborted) return;
           await runFfmpeg(inputPath, audioPath, request.signal);
+
           if (request.signal.aborted) return;
           send({ type: "status", id, status: "transcribing" });
           const transcript = await transcribeWithRetry(groq, audioPath, (message) => send({ type: "status", id, status: "transcribing", message }));
+
           if (request.signal.aborted) return;
           const srt = toSrt(transcript.segments ?? []);
           send({ type: "result", id, filename: subtitleName(file.name), content: srt });
