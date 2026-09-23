@@ -114,6 +114,7 @@ AutoSRT includes a **100% standalone, zero-dependency Windows desktop client** t
 - **⚡ Local FFmpeg Engine**: Automatically detects FFmpeg in your PATH or app folder. If missing, it features a **1-click automatic download** of portable FFmpeg directly into `%LOCALAPPDATA%\AutoSRT\bin`.
 - **🎬 Smart Speech Audio Extraction**: Converts video files into ultra-compact, crystal-clear 16kHz mono audio streams before sending to Groq, turning multi-gigabyte videos into ~15MB in seconds.
 - **💾 Automatic `.srt` Placement**: Subtitles are saved directly next to your video files (e.g. `Lecture.mp4` ➡️ `Lecture.srt`) or in any custom folder you designate.
+- **🌐 Multi-Language (English Default & Arabic)**: Clean bilingual interface with English as the primary default and an instant 1-click toggle to Arabic (`العربية`) with native RTL layout switching.
 - **👁️ Built-in Subtitle Viewer**: One-click to preview the generated subtitles or reveal the file in Windows Explorer.
 - **🪶 Ultra-Lightweight (64 KB)**: No heavy Electron, no Python runtime. Runs natively on any Windows 10 or 11 system out of the box!
 
