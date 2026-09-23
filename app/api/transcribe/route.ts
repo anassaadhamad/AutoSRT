@@ -312,8 +312,11 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Server configuration validation
-  if (!process.env.GROQ_API_KEY) {
+  // 3. Server or User-provided API Key validation
+  const userApiKey = request.headers.get("x-groq-api-key")?.trim();
+  const apiKey = userApiKey && userApiKey.startsWith("gsk_") ? userApiKey : process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
     return Response.json({ error: "GROQ_API_KEY is not configured on the server." }, { status: 500 });
   }
   if (!getFfmpegBinary()) {
@@ -352,7 +355,7 @@ export async function POST(request: Request) {
 
   const batch: BatchFile[] = files.map((file, index) => ({ id: ids[index] || crypto.randomUUID(), file }));
   const encoder = new TextEncoder();
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 0 });
+  const groq = new Groq({ apiKey, maxRetries: 0 });
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let succeeded = 0;

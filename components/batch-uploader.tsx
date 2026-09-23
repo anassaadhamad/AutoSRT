@@ -1,8 +1,8 @@
 "use client";
 
 import JSZip from "jszip";
-import { AlertCircle, Check, Download, FileAudio, FileVideo, LoaderCircle, RotateCcw, UploadCloud, X } from "lucide-react";
-import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { AlertCircle, Check, Download, FileAudio, FileVideo, KeyRound, LoaderCircle, RotateCcw, UploadCloud, X } from "lucide-react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 
 type Status = "queued" | "uploading" | "extracting" | "transcribing" | "ready" | "error";
 
@@ -69,6 +69,24 @@ export function BatchUploader() {
   const [notice, setNotice] = useState<string>();
   const inputRef = useRef<HTMLInputElement>(null);
   const activeControllers = useRef<Map<string, AbortController>>(new Map());
+  const [customApiKey, setCustomApiKey] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("autosrt_groq_key") : null;
+    if (saved) setCustomApiKey(saved);
+  }, []);
+
+  function handleKeyChange(val: string) {
+    setCustomApiKey(val);
+    if (typeof window !== "undefined") {
+      if (val.trim()) {
+        localStorage.setItem("autosrt_groq_key", val.trim());
+      } else {
+        localStorage.removeItem("autosrt_groq_key");
+      }
+    }
+  }
 
   function addFiles(incoming: File[]) {
     const mediaFiles = incoming.filter((file) =>
@@ -213,8 +231,14 @@ export function BatchUploader() {
       form.append("files", item.file, item.file.name);
 
       try {
+        const headers: Record<string, string> = {};
+        if (customApiKey.trim()) {
+          headers["x-groq-api-key"] = customApiKey.trim();
+        }
+
         const response = await fetch("/api/transcribe", {
           method: "POST",
+          headers,
           body: form,
           signal: controller.signal,
         });
@@ -326,6 +350,64 @@ export function BatchUploader() {
           className="hidden"
         />
       </div>
+
+      {/* Optional Custom API Key Drawer */}
+      <div className="mx-4 mb-2 flex items-center justify-between text-xs">
+        <button
+          type="button"
+          onClick={() => setShowSettings(!showSettings)}
+          className="flex items-center gap-1.5 rounded-lg py-1 text-slate-400 transition hover:text-emerald-400"
+        >
+          <KeyRound size={13} />
+          <span>{customApiKey ? "Custom Groq Key configured" : "Bring Your Own API Key (Optional)"}</span>
+        </button>
+        {customApiKey && (
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400">
+            <span className="size-1.5 rounded-full bg-emerald-400" />
+            Active
+          </span>
+        )}
+      </div>
+
+      {showSettings && (
+        <div className="mx-4 mb-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 transition">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="max-w-md">
+              <p className="text-xs font-semibold text-slate-200">Custom Groq Whisper API Key</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-slate-400">
+                Leave empty to use the server default, or get your 100% free key from{" "}
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-emerald-400 underline hover:text-emerald-300"
+                >
+                  Groq Console
+                </a>{" "}
+                (instant signup, no credit card required).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                placeholder="gsk_..."
+                value={customApiKey}
+                onChange={(e) => handleKeyChange(e.target.value)}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-400 focus:outline-none sm:w-60"
+              />
+              {customApiKey && (
+                <button
+                  type="button"
+                  onClick={() => handleKeyChange("")}
+                  className="rounded-lg px-2 py-1 text-xs text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {items.length > 0 && (
         <div className="border-t border-slate-800/80">

@@ -18,7 +18,7 @@
   Zero setup headaches, zero data retention, fully dockerized, and enterprise-hardened.
 </p>
 
-[🌐 **Live Demo**](https://autosrt.anas.lol) • [Quick Start](#-quick-start) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [Security](#-enterprise-grade-security) • [Environment Variables](#-configuration)
+[🌐 **Live Demo**](https://autosrt.anas.lol) • [🪟 **Download .EXE**](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) • [Quick Start](#-quick-start) • [Coolify Deployment](#-coolify--docker-deployment) • [Architecture](#-architecture--workflow) • [Security](#-enterprise-grade-security)
 
 </div>
 
@@ -28,6 +28,8 @@
 
 - **🚀 Lightning-Fast AI Transcription**: Leverages **Groq Whisper Large v3 Turbo** on specialized LPUs to transcribe speech up to 216x faster than real-time.
 - **🎧 Full Audio & Video Mixed Batching**: Drop videos (`.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, etc.) and audio recordings (`.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, etc.) into the exact same batch.
+- **🪟 Native Windows Desktop App**: Run `AutoSRT.exe` directly on Windows with zero setup, zero dependencies, and instant frameless desktop interface.
+- **🔑 Bring Your Own Key (BYOK)**: Use the shared server instance, or easily enter your own free Groq API key in the app settings for unlimited personal quota.
 - **⚡ Smart Queue & State Preservation**:
   - **Zero Duplicate Processing**: Already completed files (`ready`) are preserved and never re-uploaded or re-billed when you add new files.
   - **Individual & Batch Downloads**: Download any single `.srt` directly with 1 click, or download the full batch as a tidy `subtitles.zip`.
@@ -96,6 +98,16 @@ GROQ_API_KEY=gsk_your_groq_api_key_here
 npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+---
+
+## 🪟 Windows Desktop App (`AutoSRT.exe`)
+
+For maximum convenience, you can run AutoSRT as a native Windows desktop client with zero installation:
+
+1. Download [`AutoSRT.exe`](https://github.com/anassaadhamad/AutoSRT/raw/main/AutoSRT.exe) (only 21 KB).
+2. Double-click `AutoSRT.exe` on any Windows 10/11 machine.
+3. It launches instantly in a dedicated frameless desktop window with hardware acceleration and full drag-and-drop batch upload support!
 
 ---
 
